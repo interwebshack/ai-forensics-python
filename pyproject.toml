@@ -1,0 +1,33 @@
+[tool.poetry]
+name = "aiforensics"
+version = "0.0.0"
+description = "Python based command-line tool for inspecting AI/ML models."
+authors = ["interwebshack <22042209+interwebshack@users.noreply.github.com>"]
+license = "MIT License"
+readme = "README.md"
+packages = [{ include = "ai_forensics" }]
+exclude = ["tests/*"]
+
+[tool.poetry.dependencies]
+python = ">=3.10,<4.0"
+rich = "^14.0.0"
+
+
+[tool.poetry.group.dev.dependencies]
+black = "^25.1.0"
+isort = "^6.0.1"
+mypy = "^1.15.0"
+pylint = "^3.3.7"
+pytest-cov = "^6.1.1"
+vulture = "^2.14"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+aifx = "ai_forensics.cli:main"
+
+[tool.black]
+line-length = 100
+target-version = ['py310', 'py311', 'py312']
