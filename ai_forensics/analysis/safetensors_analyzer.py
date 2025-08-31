@@ -24,7 +24,7 @@ def _sha256_mv(mv: memoryview) -> str:
     return h.hexdigest()
 
 
-def analyze_file(path: str, *, debug: bool = False, max_workers: int = 8) -> AnalysisReport:
+def analyze_file(path: str, *, debug: bool = False) -> AnalysisReport:
     """Analyze a SafeTensors file (treated as v1) and populate reason matrix on failure."""
     src = LocalFileSource(path)
     with src.open() as mf:

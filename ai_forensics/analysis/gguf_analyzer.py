@@ -23,7 +23,7 @@ def _sha256_mv(mv: memoryview) -> str:
     return h.hexdigest()
 
 
-def analyze_file(path: str, *, debug: bool = False, max_workers: int = 8) -> AnalysisReport:
+def analyze_file(path: str, *, debug: bool = False) -> AnalysisReport:
     """Analyze a GGUF file, including version identification and mismatch reasons."""
     src = LocalFileSource(path)
     with src.open() as mf:
