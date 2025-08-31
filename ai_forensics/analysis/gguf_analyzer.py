@@ -119,4 +119,3 @@ def analyze_file(path: str, *, debug: bool = False, max_workers: int = 8) -> Ana
         report.add("tensor_non_overlap", non_overlap, "no overlapping tensor regions")
 
         return report
-        return report

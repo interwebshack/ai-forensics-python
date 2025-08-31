@@ -85,12 +85,3 @@ def analyze_file(path: str, *, debug: bool = False, max_workers: int = 8) -> Ana
         report.add("tensor_bounds_all_valid", ok_bounds, "All tensor extents lie within file")
 
         return report
-        return report
-        return report
-        return report
-        return report
-        return report
-        return report
-        return report
-        return report
-        return report

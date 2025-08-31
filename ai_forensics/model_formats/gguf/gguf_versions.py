@@ -234,8 +234,3 @@ def parse_gguf_versioned(buf: memoryview, *, file_size: int) -> GGUFParsed:
         )
     return GGUFParsed(model=None, mismatches=mismatches, endian=None)
         )
-    return GGUFParsed(model=None, mismatches=mismatches, endian=None)
-        )
-    return GGUFParsed(model=None, mismatches=mismatches, endian=None)
-        )
-    return GGUFParsed(model=None, mismatches=mismatches, endian=None)
