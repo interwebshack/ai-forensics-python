@@ -12,14 +12,10 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
 from typing import Optional
 
-from rich import box
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
-from rich.tree import Tree
 
 from ai_forensics import __version__
 from ai_forensics.analysis import gguf_analyzer, safetensors_analyzer
