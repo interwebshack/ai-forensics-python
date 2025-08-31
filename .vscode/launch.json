@@ -11,12 +11,22 @@
             "module": "ai_forensics"
         },
         {
-            "name": "AI Forensics: Help Command",
+            "name": "AI Forensics: Help Command (-h)",
             "type": "debugpy",
             "request": "launch",
             "module": "ai_forensics",
             "args": [
-                "help"
+                "-h"
+            ],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "AI Forensics: Help Command (--help)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "ai_forensics",
+            "args": [
+                "--help"
             ],
             "console": "integratedTerminal"
         },
