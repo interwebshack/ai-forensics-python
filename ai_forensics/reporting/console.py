@@ -59,4 +59,3 @@ def render_report(rep) -> None:
     render_summary(rep)
     render_findings(rep)
     render_reason_matrix(rep)
-    render_reason_matrix(rep)
