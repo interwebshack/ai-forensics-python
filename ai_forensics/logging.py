@@ -28,4 +28,3 @@ def configure_logging(*, debug: bool = False) -> None:
         "- <level>{message}</level>"
     )
     logger.add(sys.stderr, level=level, format=fmt, enqueue=True, backtrace=debug, diagnose=debug)
-    logger.add(sys.stderr, level=level, format=fmt, enqueue=True, backtrace=debug, diagnose=debug)
