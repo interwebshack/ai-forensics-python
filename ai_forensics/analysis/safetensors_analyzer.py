@@ -5,62 +5,39 @@ SafeTensors analyzer: structural verification + reason matrix.
 
 from __future__ import annotations
 
-import hashlib
-
 from loguru import logger
 
+from ai_forensics.analysis.analyzer import Analyzer
 from ai_forensics.analysis.base import AnalysisReport
-from ai_forensics.io.file_reader import LocalFileSource
 from ai_forensics.model_formats.safetensors.safetensors import (
     SafeTensorsParseError,
     parse_safetensors,
 )
-from ai_forensics.observability import Timer
 
 
-def _sha256_mv(mv: memoryview) -> str:
-    h = hashlib.sha256()
-    h.update(mv)
-    return h.hexdigest()
+class SafeTensorsAnalyzer(Analyzer):
+    """Analyzer implementation for SafeTensors files."""
 
+    def get_format_name(self) -> str:
+        return "safetensors"
 
-def analyze_file(path: str, *, debug: bool = False) -> AnalysisReport:
-    """Analyze a SafeTensors file (treated as v1) and populate reason matrix on failure."""
-    src = LocalFileSource(path)
-    with src.open() as mf:
-        mv = mf.view
-        file_size = mf.size
-
-        with Timer("sha256") as t_hash:
-            sha256_hex = _sha256_mv(mv)
-        logger.debug("SHA256 computed in {ms:.2f}ms", ms=t_hash.duration_ms)
+    def _perform_analysis(self, mv: memoryview, report: AnalysisReport) -> None:
+        """Core SafeTensors analysis logic."""
+        file_size = report.file_size  # Get file size from the report
 
         try:
-            with Timer("parse") as t_parse:
-                model = parse_safetensors(mv, file_size=file_size)
-            logger.debug("Parsed SafeTensors in {ms:.2f}ms", ms=t_parse.duration_ms)
+            model = parse_safetensors(mv, file_size=file_size)
         except SafeTensorsParseError as e:
-            rep = AnalysisReport(
-                file_path=path,
-                file_size=file_size,
-                sha256_hex=sha256_hex,
-                format="safetensors",
-                metadata={},
-            )
-            rep.add("parse", False, f"SafeTensors parse error: {e}")
-            rep.add_reason("safetensors v1", str(e))
-            return rep
+            report.add("parse", False, f"SafeTensors parse error: {e}")
+            report.add_reason("safetensors v1", str(e))
+            return
 
-        report = AnalysisReport(
-            file_path=path,
-            file_size=file_size,
-            sha256_hex=sha256_hex,
-            format="safetensors",
-            metadata={
+        report.metadata.update(
+            {
                 "header_size": model.header_size,
                 "n_tensors": len(model.tensors),
                 "data_start": model.data_start,
-            },
+            }
         )
         report.add(
             "header_basic", True, f"header_size={model.header_size} data_start={model.data_start}"
@@ -83,5 +60,3 @@ def analyze_file(path: str, *, debug: bool = False) -> AnalysisReport:
 
         report.add("tensor_order_non_overlapping", ok_order, "Non-overlapping, increasing offsets")
         report.add("tensor_bounds_all_valid", ok_bounds, "All tensor extents lie within file")
-
-        return report

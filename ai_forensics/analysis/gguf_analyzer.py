@@ -5,79 +5,51 @@ GGUF analyzer: version-aware structural verification + reason matrix.
 
 from __future__ import annotations
 
-import hashlib
 from typing import Dict, List, Tuple
 
 from loguru import logger
 
+from ai_forensics.analysis.analyzer import Analyzer
 from ai_forensics.analysis.base import AnalysisReport
-from ai_forensics.io.file_reader import LocalFileSource
 from ai_forensics.model_formats.gguf.gguf import GGUFParseError
 from ai_forensics.model_formats.gguf.gguf_quantization import QUANTIZATION_MAP
 from ai_forensics.model_formats.gguf.gguf_versions import parse_gguf_versioned
-from ai_forensics.observability import Timer
 
 
-def _sha256_mv(mv: memoryview) -> str:
-    h = hashlib.sha256()
-    h.update(mv)
-    return h.hexdigest()
+class GGUFAnalyzer(Analyzer):
+    """Analyzer implementation for GGUF files."""
 
+    def get_format_name(self) -> str:
+        return "gguf"
 
-def analyze_file(path: str, *, debug: bool = False) -> AnalysisReport:
-    """Analyze a GGUF file, including version identification and mismatch reasons."""
-    src = LocalFileSource(path)
-    with src.open() as mf:
-        mv = mf.view
-        file_size = mf.size
+    def _perform_analysis(self, mv: memoryview, report: AnalysisReport) -> None:
+        """Core GGUF analysis logic."""
+        file_size = report.file_size  # Get file size from the report
 
-        with Timer("sha256") as t_hash:
-            sha256_hex = _sha256_mv(mv)
-        logger.debug("SHA256 computed in {ms:.2f}ms", ms=t_hash.duration_ms)
-
-        with Timer("parse") as t_parse:
-            try:
-                parsed = parse_gguf_versioned(mv, file_size=file_size)
-            except GGUFParseError as e:
-                rep = AnalysisReport(
-                    file_path=path,
-                    file_size=file_size,
-                    sha256_hex=sha256_hex,
-                    format="gguf",
-                    metadata={},
-                )
-                rep.add("parse", False, f"GGUF parse error: {e}")
-                rep.add_reason("gguf v1/v2/v3", str(e))
-                return rep
-        logger.debug("Parsed GGUF in {ms:.2f}ms", ms=t_parse.duration_ms)
+        try:
+            parsed = parse_gguf_versioned(mv, file_size=file_size)
+        except GGUFParseError as e:
+            report.add("parse", False, f"GGUF parse error: {e}")
+            report.add_reason("gguf v1/v2/v3", str(e))
+            return
 
         if parsed.model is None:
-            rep = AnalysisReport(
-                file_path=path,
-                file_size=file_size,
-                sha256_hex=sha256_hex,
-                format="gguf",
-                metadata={},
-            )
             for mm in parsed.mismatches:
-                rep.add_reason(f"gguf {mm.version}", mm.reason)
-            rep.add("parse", False, "No version parser accepted this file")
-            return rep
+                report.add_reason(f"gguf {mm.version}", mm.reason)
+            report.add("parse", False, "No version parser accepted this file")
+            return
 
         model = parsed.model
-        report = AnalysisReport(
-            file_path=path,
-            file_size=file_size,
-            sha256_hex=sha256_hex,
-            format="gguf",
-            metadata={
+        # Update the report metadata
+        report.metadata.update(
+            {
                 "version": model.version,
                 "endian": model.endian,
                 "alignment": model.alignment,
                 "n_kv": model.n_kv,
                 "n_tensors": model.n_tensors,
                 "data_offset": model.data_offset,
-            },
+            }
         )
 
         # Basic checks
@@ -101,12 +73,13 @@ def analyze_file(path: str, *, debug: bool = False) -> AnalysisReport:
             next_start_abs = (
                 (model.data_offset + order[i + 1].offset) if i + 1 < len(order) else file_size
             )
+            # The on-disk size of the tensor data is the space between its start and the next tensor's start
             end = next_start_abs
             in_file = 0 <= start <= end <= file_size
             report.add(
                 f"tensor_bounds:{ti.name}",
                 in_file,
-                f"[{start},{end}) type={ti.ggml_type} dims={ti.dims}",
+                f"[{start},{end}) type={ti.ggml_type.name} dims={ti.dims}",
             )
             bounds.append((ti.name, start, end))
 
@@ -119,7 +92,7 @@ def analyze_file(path: str, *, debug: bool = False) -> AnalysisReport:
                 break
         report.add("tensor_non_overlap", non_overlap, "no overlapping tensor regions")
 
-        # Quantization and Tensor Size Verification
+        # --- Quantization and Tensor Size Verification ---
         quantization_mix: Dict[str, int] = {}
         for i, ti in enumerate(order):
             quant_name = ti.ggml_type.name
@@ -172,5 +145,3 @@ def analyze_file(path: str, *, debug: bool = False) -> AnalysisReport:
                 "Distribution of tensor quantization formats found in model",
                 profile=quantization_mix,
             )
-
-        return report
