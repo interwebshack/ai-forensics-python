@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from ai_forensics.model_formats.gguf.gguf import GGUFKV, GGUFModel, GGUFParseError, GGUFTensorInfo
 from ai_forensics.model_formats.gguf.gguf_quantization import GGMLType
