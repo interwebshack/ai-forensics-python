@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict
 
-from ..observability import to_dict
+from ai_forensics.observability import to_dict
 
 
 def to_json_dict(report) -> Dict[str, Any]:

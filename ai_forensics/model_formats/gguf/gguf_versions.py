@@ -9,7 +9,9 @@ import struct
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-from .gguf import GGUFKV, GGUFModel, GGUFParseError, GGUFTensorInfo
+from ai_forensics.model_formats.gguf.gguf import (GGUFKV, GGUFModel,
+                                                  GGUFParseError,
+                                                  GGUFTensorInfo)
 
 # GGUF type codes
 T_UINT8 = 0
@@ -229,5 +231,11 @@ def parse_gguf_versioned(buf: memoryview, *, file_size: int) -> GGUFParsed:
                 version=f"LE={version_le}/BE={version_be}",
                 reason="Unsupported version field; not in {1,2,3}",
             )
+        )
+    return GGUFParsed(model=None, mismatches=mismatches, endian=None)
+        )
+    return GGUFParsed(model=None, mismatches=mismatches, endian=None)
+        )
+    return GGUFParsed(model=None, mismatches=mismatches, endian=None)
         )
     return GGUFParsed(model=None, mismatches=mismatches, endian=None)
