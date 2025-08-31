@@ -1,0 +1,34 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "AI Forensics",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "ai_forensics"
+        },
+        {
+            "name": "AI Forensics: Help Command",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "ai_forensics",
+            "args": [
+                "help"
+            ],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "AI Forensics: Version Command",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "ai_forensics",
+            "args": [
+                "version"
+            ],
+            "console": "integratedTerminal"
+        }
+    ]
+}
