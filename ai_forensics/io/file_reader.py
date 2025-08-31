@@ -1,3 +1,4 @@
+# ai_forensics/io/file_reader.py
 """
 Zero-copy local file reader using mmap + memoryview.
 """

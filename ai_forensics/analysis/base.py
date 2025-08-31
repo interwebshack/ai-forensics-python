@@ -1,3 +1,4 @@
+# ai_forensics/analysis/base.py
 """
 Base analysis models and “reason matrix” support.
 """

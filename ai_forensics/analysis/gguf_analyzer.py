@@ -1,3 +1,4 @@
+# ai_forensics/analysis/gguf_analyzer.py
 """
 GGUF analyzer: version-aware structural verification + reason matrix.
 """

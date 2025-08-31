@@ -1,3 +1,4 @@
+# ai_forensics/reporting/json_reporter.py
 """
 JSON reporting utilities (optional).
 """
