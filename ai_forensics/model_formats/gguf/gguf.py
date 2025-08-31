@@ -8,6 +8,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
 
+from ai_forensics.model_formats.gguf.gguf_quantization import GGMLType
+
 
 @dataclass
 class GGUFKV:
@@ -22,8 +24,18 @@ class GGUFTensorInfo:
     name: str
     n_dims: int
     dims: Tuple[int, ...]
-    ggml_type: int
+    ggml_type: GGMLType  # Changed from int to our Enum
     offset: int  # relative to data section
+
+    @property
+    def n_elements(self) -> int:
+        """Total number of elements in the tensor."""
+        if not self.dims:
+            return 0
+        p = 1
+        for d in self.dims:
+            p *= d
+        return p
 
 
 @dataclass
