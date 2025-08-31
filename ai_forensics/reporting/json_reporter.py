@@ -20,4 +20,3 @@ def write_json(report, path: str) -> None:
     """Write report to a file as pretty JSON."""
     with open(path, "w", encoding="utf-8") as f:
         json.dump(to_json_dict(report), f, indent=2)
-        json.dump(to_json_dict(report), f, indent=2)
