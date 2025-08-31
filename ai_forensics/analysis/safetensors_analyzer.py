@@ -55,7 +55,19 @@ class SafeTensorsAnalyzer(Analyzer):
                 ok_bounds = False
             if abs_b < prev_end:
                 ok_order = False
-            report.add(f"tensor_bounds:{t.name}", in_file, f"[{abs_b},{abs_e}) {t.dtype} {t.shape}")
+
+            # Pass details as structured context for better reporting.
+            report.add(
+                f"tensor_bounds:{t.name}",
+                in_file,
+                f"[{abs_b},{abs_e})",  # Simpler detail string
+                **{
+                    "start": abs_b,
+                    "end": abs_e,
+                    "type": t.dtype,
+                    "dims": str(t.shape),
+                },
+            )
             prev_end = max(prev_end, abs_e)
 
         report.add("tensor_order_non_overlapping", ok_order, "Non-overlapping, increasing offsets")

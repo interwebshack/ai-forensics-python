@@ -35,16 +35,64 @@ def render_summary(rep: AnalysisReport) -> None:
     console.print(t)
 
 
+def _render_tensor_bounds_table(title: str, findings: List[Finding]) -> None:
+    """Specialized renderer for the 'Tensor Bounds' table with custom columns and sorting."""
+    table = Table(title=title, box=box.ROUNDED, show_lines=False, title_style="bold magenta")
+    table.add_column("Status", justify="center", width=8)
+    table.add_column("Tensor Name", style="cyan", no_wrap=True)
+    table.add_column("Start Address", justify="right", style="white")
+    table.add_column("End Address", justify="right", style="white")
+    table.add_column("Type", justify="left", style="yellow")
+    table.add_column("Dimensions", justify="left", style="green")
+
+    # Sort findings by the 'start' address stored in the context
+    findings.sort(key=lambda f: f.context.get("start", 0))
+
+    for f in findings:
+        status = "[green]PASS[/green]" if f.ok else "[bold red]FAIL[/bold red]"
+        tensor_name = f.name.split(":", 1)[1]
+
+        # Extract data from context, with fallbacks for safety
+        ctx = f.context
+        start = str(ctx.get("start", "N/A"))
+        end = str(ctx.get("end", "N/A"))
+        dtype = ctx.get("type", "N/A")
+        dims = ctx.get("dims", "N/A")
+
+        table.add_row(status, tensor_name, start, end, dtype, dims)
+
+    console.print(table)
+
+
+def _render_generic_table(title: str, findings: List[Finding]) -> None:
+    """Generic renderer for all other finding groups."""
+    table = Table(title=title, box=box.ROUNDED, show_lines=False, title_style="bold magenta")
+    table.add_column("Status", justify="center", width=8)
+    table.add_column("Check", style="cyan", no_wrap=True)
+    table.add_column("Details", style="white")
+
+    has_context = any(f.context for f in findings)
+    if has_context:
+        table.add_column("Context", style="yellow")
+
+    for f in sorted(findings, key=lambda x: x.name):
+        status = "[green]PASS[/green]" if f.ok else "[bold red]FAIL[/bold red]"
+        check_name = f.name.split(":", 1)[1] if ":" in f.name else f.name
+        row_data = [status, check_name, f.details]
+        if has_context:
+            context_str = "\n".join([f"[dim]{k}:[/dim] {v}" for k, v in f.context.items()])
+            row_data.append(context_str)
+        table.add_row(*row_data)
+
+    console.print(table)
+
+
 def render_findings(rep: AnalysisReport) -> None:
-    """
-    Render findings grouped into dynamically created tables for each check type.
-    """
+    """Render findings grouped into dynamically created tables for each check type."""
     if not rep.findings:
         return
 
-    # 1. Group the findings by category
     groups = defaultdict(list)
-    # Define which check names should be grouped into the main structural integrity table
     general_check_names = {
         "parse",
         "magic_version",
@@ -56,50 +104,25 @@ def render_findings(rep: AnalysisReport) -> None:
         "tensor_order_non_overlapping",
         "tensor_bounds_all_valid",
     }
-
-    # The quantization_profile is informational and displayed in the summary, so we exclude it here.
     findings_to_render = [f for f in rep.findings if f.name != "quantization_profile"]
 
     for f in findings_to_render:
         if ":" in f.name:
-            # Group per-tensor checks by their prefix (e.g., "tensor_bounds", "quantization_known")
             group_name = f.name.split(":", 1)[0]
-            title = group_name.replace("_", " ").title() + " Checks"
-            groups[title].append(f)
+            groups[group_name].append(f)
         elif f.name in general_check_names:
-            groups["Overall Structural Integrity"].append(f)
+            groups["structural_integrity"].append(f)
         else:
-            groups["Miscellaneous Checks"].append(f)  # Fallback for any other checks
+            groups["miscellaneous"].append(f)
 
-    # 2. Render a table for each group of findings
-    for title, findings_in_group in sorted(groups.items()):
-        table = Table(title=title, box=box.ROUNDED, show_lines=False, title_style="bold magenta")
+    # Render a table for each group, using the specialized renderer where appropriate
+    for group_name, findings_in_group in sorted(groups.items()):
+        title = group_name.replace("_", " ").title() + " Checks"
 
-        table.add_column("Status", justify="center", width=8)
-        table.add_column("Check", style="cyan", no_wrap=True)
-        table.add_column("Details", style="white")
-
-        # Dynamically add a "Context" column only if any finding in the group has context data
-        has_context = any(f.context for f in findings_in_group)
-        if has_context:
-            table.add_column("Context", style="yellow")
-
-        # 3. Populate the table rows
-        for f in sorted(findings_in_group, key=lambda x: x.name):
-            status = "[green]PASS[/green]" if f.ok else "[bold red]FAIL[/bold red]"
-
-            # Use the specific part of the name for per-tensor checks for brevity
-            check_name = f.name.split(":", 1)[1] if ":" in f.name else f.name
-
-            row_data = [status, check_name, f.details]
-
-            if has_context:
-                context_str = "\n".join([f"[dim]{k}:[/dim] {v}" for k, v in f.context.items()])
-                row_data.append(context_str)
-
-            table.add_row(*row_data)
-
-        console.print(table)
+        if group_name == "tensor_bounds":
+            _render_tensor_bounds_table(title, findings_in_group)
+        else:
+            _render_generic_table(title, findings_in_group)
 
 
 def render_reason_matrix(rep: AnalysisReport) -> None:

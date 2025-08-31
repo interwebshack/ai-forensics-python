@@ -73,13 +73,22 @@ class GGUFAnalyzer(Analyzer):
             next_start_abs = (
                 (model.data_offset + order[i + 1].offset) if i + 1 < len(order) else file_size
             )
-            # The on-disk size of the tensor data is the space between its start and the next tensor's start
+            # The on-disk size of the tensor data is the space between its start and
+            # the next tensor's start
             end = next_start_abs
             in_file = 0 <= start <= end <= file_size
+
+            # We now pass the details as structured context for better reporting.
             report.add(
                 f"tensor_bounds:{ti.name}",
                 in_file,
-                f"[{start},{end}) type={ti.ggml_type.name} dims={ti.dims}",
+                f"[{start},{end})",  # The detail string is now simpler
+                **{
+                    "start": start,
+                    "end": end,
+                    "type": ti.ggml_type.name,
+                    "dims": str(ti.dims),
+                },
             )
             bounds.append((ti.name, start, end))
 
