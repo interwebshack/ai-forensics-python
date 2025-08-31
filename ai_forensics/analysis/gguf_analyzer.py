@@ -10,11 +10,11 @@ from typing import List, Tuple
 
 from loguru import logger
 
-from ..formats.gguf.gguf import GGUFParseError
-from ..formats.gguf.gguf_versions import parse_gguf_versioned
-from ..io.file_reader import LocalFileSource
-from ..observability import Timer
-from .base import AnalysisReport
+from ai_forensics.analysis.base import AnalysisReport
+from ai_forensics.io.file_reader import LocalFileSource
+from ai_forensics.model_formats.gguf.gguf import GGUFParseError
+from ai_forensics.model_formats.gguf.gguf_versions import parse_gguf_versioned
+from ai_forensics.observability import Timer
 
 
 def _sha256_mv(mv: memoryview) -> str:
