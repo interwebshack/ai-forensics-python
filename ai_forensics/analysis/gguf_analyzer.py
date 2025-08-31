@@ -6,13 +6,14 @@ GGUF analyzer: version-aware structural verification + reason matrix.
 from __future__ import annotations
 
 import hashlib
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 from loguru import logger
 
 from ai_forensics.analysis.base import AnalysisReport
 from ai_forensics.io.file_reader import LocalFileSource
 from ai_forensics.model_formats.gguf.gguf import GGUFParseError
+from ai_forensics.model_formats.gguf.gguf_quantization import QUANTIZATION_MAP, GGMLType
 from ai_forensics.model_formats.gguf.gguf_versions import parse_gguf_versioned
 from ai_forensics.observability import Timer
 
@@ -117,5 +118,59 @@ def analyze_file(path: str, *, debug: bool = False) -> AnalysisReport:
                 non_overlap = False
                 break
         report.add("tensor_non_overlap", non_overlap, "no overlapping tensor regions")
+
+        # Quantization and Tensor Size Verification
+        quantization_mix: Dict[str, int] = {}
+        for i, ti in enumerate(order):
+            quant_name = ti.ggml_type.name
+            quantization_mix[quant_name] = quantization_mix.get(quant_name, 0) + 1
+
+            # Check if quantization type is known/supported by our analyzer
+            info = QUANTIZATION_MAP.get(ti.ggml_type)
+            if info is None:
+                report.add(
+                    f"quantization_known:{ti.name}",
+                    False,
+                    f"Unsupported GGML type: {ti.ggml_type.value}",
+                )
+                continue  # Can't perform further checks on this tensor
+
+            # Check if tensor dimensions are divisible by block size for quantized types
+            if ti.n_elements > 0 and info.block_size > 1:
+                if ti.n_elements % info.block_size != 0:
+                    report.add(
+                        f"quantization_alignment:{ti.name}",
+                        False,
+                        f"Tensor element count {ti.n_elements} is not divisible by block size {info.block_size}",
+                    )
+
+            # Check if on-disk size matches the expected size calculated from quantization info
+            # This is a critical integrity check.
+            _, start_abs, end_abs = bounds[i]
+            on_disk_size = end_abs - start_abs
+            expected_size = info.get_expected_size(ti.n_elements)
+
+            if expected_size == -1:  # Indicates an error from the calculation function
+                size_ok = False
+                reason = f"Could not calculate expected size; likely invalid dimensions for block size {info.block_size}"
+            else:
+                size_ok = expected_size == on_disk_size
+                reason = f"On-disk size: {on_disk_size}, Expected: {expected_size}"
+
+            report.add(
+                f"tensor_size_consistency:{ti.name}",
+                size_ok,
+                reason,
+                ggml_type=quant_name,
+            )
+
+        # Add a summary finding for the overall quantization profile
+        if quantization_mix:
+            report.add(
+                "quantization_profile",
+                True,  # This is an informational finding, so it always passes
+                "Distribution of tensor quantization formats found in model",
+                profile=quantization_mix,
+            )
 
         return report
