@@ -134,7 +134,10 @@ class GGUFAnalyzer(Analyzer):
 
             if expected_size == -1:  # Indicates an error from the calculation function
                 size_ok = False
-                reason = f"Could not calculate expected size; likely invalid dimensions for block size {info.block_size}"
+                reason = (
+                    "Could not calculate expected size; "
+                    f"likely invalid dimensions for block size {info.block_size}"
+                )
             else:
                 size_ok = expected_size == on_disk_size
                 reason = f"On-disk size: {on_disk_size}, Expected: {expected_size}"
@@ -143,7 +146,12 @@ class GGUFAnalyzer(Analyzer):
                 f"tensor_size_consistency:{ti.name}",
                 size_ok,
                 reason,
-                ggml_type=quant_name,
+                **{
+                    "start": start_abs,
+                    "on_disk": on_disk_size,
+                    "expected": expected_size if expected_size != -1 else "N/A",
+                    "ggml_type": ti.ggml_type.name,
+                },
             )
 
         # Add a summary finding for the overall quantization profile

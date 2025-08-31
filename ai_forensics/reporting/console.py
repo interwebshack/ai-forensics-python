@@ -64,6 +64,37 @@ def _render_tensor_bounds_table(title: str, findings: List[Finding]) -> None:
     console.print(table)
 
 
+def _render_size_consistency_table(title: str, findings: List[Finding]) -> None:
+    """Specialized renderer for the 'Tensor Size Consistency' table."""
+    table = Table(title=title, box=box.ROUNDED, show_lines=False, title_style="bold magenta")
+    table.add_column("Status", justify="center", width=8)
+    table.add_column("Tensor Name", style="cyan", no_wrap=True)
+    table.add_column("On-Disk Size", justify="right", style="white")
+    table.add_column("Expected Size", justify="right", style="white")
+    table.add_column("GGML Type", justify="left", style="yellow")
+
+    # Sort findings by the 'start' address to match the bounds table
+    findings.sort(key=lambda f: f.context.get("start", 0))
+
+    for f in findings:
+        status = "[green]PASS[/green]" if f.ok else "[bold red]FAIL[/bold red]"
+        tensor_name = f.name.split(":", 1)[1]
+
+        ctx = f.context
+        on_disk = str(ctx.get("on_disk", "N/A"))
+        expected = str(ctx.get("expected", "N/A"))
+        ggml_type = ctx.get("ggml_type", "N/A")
+
+        # Add a subtle visual cue if the sizes do not match
+        if not f.ok:
+            on_disk = f"[red]{on_disk}[/red]"
+            expected = f"[yellow]{expected}[/yellow]"
+
+        table.add_row(status, tensor_name, on_disk, expected, ggml_type)
+
+    console.print(table)
+
+
 def _render_generic_table(title: str, findings: List[Finding]) -> None:
     """Generic renderer for all other finding groups."""
     table = Table(title=title, box=box.ROUNDED, show_lines=False, title_style="bold magenta")
@@ -121,6 +152,8 @@ def render_findings(rep: AnalysisReport) -> None:
 
         if group_name == "tensor_bounds":
             _render_tensor_bounds_table(title, findings_in_group)
+        elif group_name == "tensor_size_consistency":
+            _render_size_consistency_table(title, findings_in_group)
         else:
             _render_generic_table(title, findings_in_group)
 
