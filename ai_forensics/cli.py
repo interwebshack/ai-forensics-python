@@ -62,7 +62,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
 
     if args.cmd == "version":
-        console.print(f"ai-forensics-python version {__version__}")
+        console.print(f"Ai Forensics Version {__version__}")
         return 0
 
     if args.cmd == "scan":
