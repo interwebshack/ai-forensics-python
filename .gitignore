@@ -208,3 +208,6 @@ __marimo__/
 
 # Microsoft Visual Studio Code
 .vscode/
+
+# Test Data Folder
+examples
