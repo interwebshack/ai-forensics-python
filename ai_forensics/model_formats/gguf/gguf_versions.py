@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from ai_forensics.model_formats.gguf.gguf import GGUFKV, GGUFModel, GGUFParseError, GGUFTensorInfo
+from ai_forensics.model_formats.gguf.gguf_quantization import GGMLType
 
 # GGUF type codes
 T_UINT8 = 0
@@ -134,7 +135,12 @@ def _parse_tensor_info(
     for _ in range(n_dims):
         d, off = _u64(buf, off, endian)  # accept 64-bit dims across versions
         dims.append(int(d))
-    ggml_type, off = _i32(buf, off, endian)
+
+    ggml_type_int, off = _i32(buf, off, endian)
+    try:
+        ggml_type = GGMLType(ggml_type_int)
+    except ValueError:
+        raise GGUFParseError(f"Unknown GGML type code {ggml_type_int} for tensor {name}")
     rel_off, off = _u64(buf, off, endian)  # offset relative to data section
     return (
         GGUFTensorInfo(
