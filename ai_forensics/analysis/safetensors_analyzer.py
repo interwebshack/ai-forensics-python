@@ -11,7 +11,7 @@ from loguru import logger
 
 from ai_forensics.analysis.base import AnalysisReport
 
-from ..formats.safetensors import SafeTensorsParseError, parse_safetensors
+from ..formats.safetensors.safetensors import SafeTensorsParseError, parse_safetensors
 from ..io.file_reader import LocalFileSource
 from ..observability import Timer
 
@@ -82,6 +82,9 @@ def analyze_file(path: str, *, debug: bool = False, max_workers: int = 8) -> Ana
         report.add("tensor_order_non_overlapping", ok_order, "Non-overlapping, increasing offsets")
         report.add("tensor_bounds_all_valid", ok_bounds, "All tensor extents lie within file")
 
+        return report
+        return report
+        return report
         return report
         return report
         return report

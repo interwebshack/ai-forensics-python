@@ -1,4 +1,4 @@
-# ai_forensics/model_formats/safetensors.py
+# ai_forensics/model_formats/safetensors/safetensors.py
 """
 Pure-Python SafeTensors parser (v1-style header).
 """

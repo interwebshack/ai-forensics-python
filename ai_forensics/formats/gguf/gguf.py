@@ -1,4 +1,4 @@
-# ai_forensics/model_formats/gguf.py
+# ai_forensics/model_formats/gguf/gguf.py
 """
 GGUF shared structures and exceptions.
 """

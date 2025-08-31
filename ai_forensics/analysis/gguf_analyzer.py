@@ -10,8 +10,8 @@ from typing import List, Tuple
 
 from loguru import logger
 
-from ..formats.gguf import GGUFParseError
-from ..formats.gguf_versions import parse_gguf_versioned
+from ..formats.gguf.gguf import GGUFParseError
+from ..formats.gguf.gguf_versions import parse_gguf_versioned
 from ..io.file_reader import LocalFileSource
 from ..observability import Timer
 from .base import AnalysisReport
