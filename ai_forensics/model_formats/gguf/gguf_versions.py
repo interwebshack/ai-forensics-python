@@ -9,9 +9,7 @@ import struct
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-from ai_forensics.model_formats.gguf.gguf import (GGUFKV, GGUFModel,
-                                                  GGUFParseError,
-                                                  GGUFTensorInfo)
+from ai_forensics.model_formats.gguf.gguf import GGUFKV, GGUFModel, GGUFParseError, GGUFTensorInfo
 
 # GGUF type codes
 T_UINT8 = 0
@@ -233,4 +231,3 @@ def parse_gguf_versioned(buf: memoryview, *, file_size: int) -> GGUFParsed:
             )
         )
     return GGUFParsed(model=None, mismatches=mismatches, endian=None)
-        )
