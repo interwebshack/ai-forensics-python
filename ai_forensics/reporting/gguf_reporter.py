@@ -9,6 +9,7 @@ from typing import List
 
 from rich import box
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
 
 from ai_forensics.analysis.base import AnalysisReport, Finding
@@ -34,45 +35,44 @@ def _render_summary(rep: AnalysisReport) -> None:
     console.print(t)
 
 
-def _render_kv_analysis_table(findings: List[Finding]) -> None:
-    """Renders the single, 'always-on deep' KV validation table."""
-    table = Table(
-        title="Key-Value Store Deep Validation",
-        box=box.ROUNDED,
-        show_lines=False,
-        title_style="bold magenta",
+def _render_kv_forensic_grid(findings: List[Finding]) -> None:
+    """Renders a detailed 'Forensic Grid' for the KV store validation results."""
+    console.print(
+        Panel("[bold]Key-Value Store Deep Validation[/bold]", style="bold magenta", expand=False)
     )
-    table.add_column("Status", width=8)
-    table.add_column("Index", justify="right", style="dim")
-    table.add_column("Key", style="cyan", no_wrap=True)
-    table.add_column("Start Addr", justify="right")
-    table.add_column("End Addr", justify="right")
-    table.add_column("Size (B)", justify="right", style="green")
-    table.add_column("Type", style="yellow")
-    table.add_column("Value (Preview)", style="white")
-    table.add_column("Checks Performed", style="dim")
 
     findings.sort(key=lambda f: f.context.get("start", 0))
 
     for index, f in enumerate(findings, start=1):
         ctx = f.context
-        status = STATUS_STYLES.get(ctx.get("status", "FAIL"), "[bold red]FAIL[/bold red]")
-        table.add_row(
-            status,
-            str(index),
-            ctx.get("key", "N/A"),
-            str(ctx.get("start", "N/A")),
-            str(ctx.get("end", "N/A")),
-            str(ctx.get("size", "N/A")),
-            ctx.get("type", "N/A"),
-            ctx.get("value_preview", "N/A"),
-            ctx.get("checks", "N/A"),
+        sub_checks = ctx.get("sub_checks", [])
+
+        # Create the title for the outer panel
+        title = (
+            f"Key: [cyan]{ctx.get('key', 'N/A')}[/cyan]  "
+            f"[dim]Index: {index}, Addr: {ctx.get('start', '?')}-{ctx.get('end', '?')} ({ctx.get('size', '?')} B)[/dim]"
         )
-    console.print(table)
-    # Add summary footer
-    statuses = [f.context.get("status", "FAIL") for f in findings]
-    summary = f"Summary: PASS={statuses.count('PASS')} WARN={statuses.count('WARN')} FAIL={statuses.count('FAIL')}"
-    console.print(f"[dim]{summary}[/dim]", justify="right")
+
+        # Create the inner table for the sub-checks
+        sub_table = Table(box=None, show_header=False, padding=(0, 1))
+        sub_table.add_column("Status", width=8)
+        sub_table.add_column("Check", style="cyan", width=15)
+        sub_table.add_column("Details", style="white")
+
+        for sc in sub_checks:
+            status_styled = STATUS_STYLES.get(sc.status, "[bold red]FAIL[/bold red]")
+            sub_table.add_row(status_styled, sc.name, sc.details)
+
+        # Determine the border style based on the overall status
+        overall_status = "PASS"
+        if any(sc.status == "FAIL" for sc in sub_checks):
+            overall_status = "FAIL"
+        elif any(sc.status == "WARN" for sc in sub_checks):
+            overall_status = "WARN"
+
+        border_style = {"PASS": "green", "WARN": "yellow", "FAIL": "red"}.get(overall_status, "red")
+
+        console.print(Panel(sub_table, title=title, border_style=border_style, expand=False))
 
 
 def _render_combined_tensor_table(title: str, findings: List[Finding]) -> None:
@@ -191,9 +191,9 @@ def render_report(rep: AnalysisReport) -> None:
             custom_sort_order=integrity_sort_order,
         )
 
-    # KV table is now the default
+    # KV table
     if "kv_analysis" in groups:
-        _render_kv_analysis_table(groups["kv_analysis"])
+        _render_kv_forensic_grid(groups["kv_analysis"])
 
     # Tensor Layout
     if "tensor_layout" in groups:

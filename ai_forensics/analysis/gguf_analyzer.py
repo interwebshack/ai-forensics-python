@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 import struct
+from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
 
 from ai_forensics.analysis.analyzer import Analyzer
@@ -48,6 +49,15 @@ KV_TYPE_MAP = {
 }
 
 
+@dataclass
+class SubCheckResult:
+    """Represents the result of a single validation check on a KV entry."""
+
+    status: str  # PASS | WARN | FAIL
+    name: str
+    details: str
+
+
 class GGUFAnalyzer(Analyzer):
     """Analyzer implementation for GGUF files."""
 
@@ -57,30 +67,42 @@ class GGUFAnalyzer(Analyzer):
     def _perform_kv_analysis(self, model: GGUFModel, report: AnalysisReport) -> None:
         """
         Performs a comprehensive, 'always-on deep' validation of the KV store,
-        combining structural, content, and spec-conformance checks.
+        generating a detailed list of sub-checks for each key.
         """
         seen_keys: Dict[str, GGUFKV] = {}
 
-        # Iterate in the natural on-disk order preserved by the parser
         for v in model.kv.values():
-            status = "PASS"
-            checks: List[str] = []
+            sub_checks: List[SubCheckResult] = []
 
-            # 1. Structural Checks (bounds are implicit from successful parsing)
-            checks.append("bounds")
+            # 1. Structural Checks
+            sub_checks.append(
+                SubCheckResult(
+                    "PASS",
+                    "bounds",
+                    f"Region [{v.offset_start}, {v.offset_end}) is within the KV block.",
+                )
+            )
 
             # 2. Key Name Pattern Check
             if re.match(r"^[a-z0-9][a-z0-9._-]*$", v.key):
-                checks.append("key_pattern")
+                sub_checks.append(
+                    SubCheckResult(
+                        "PASS", "key_pattern", f"Key name '{v.key}' matches the expected pattern."
+                    )
+                )
             else:
-                status = "WARN"
-                checks.append("key_pattern_fail")
+                sub_checks.append(
+                    SubCheckResult(
+                        "WARN",
+                        "key_pattern",
+                        f"Key name '{v.key}' does not follow the recommended pattern.",
+                    )
+                )
 
             # 3. Type and Value Decoding
             type_name = KV_TYPE_MAP.get(v.type, "Unknown")
             is_numeric = v.type not in (T_STRING, T_BOOL, T_ARRAY)
             decoded_value: Any = None
-            value_preview = ""
             try:
                 if is_numeric and isinstance(v.value, bytes):
                     if v.type in (T_FLOAT32, T_FLOAT64):
@@ -89,72 +111,113 @@ class GGUFAnalyzer(Analyzer):
                     else:
                         signed = v.type in (T_INT8, T_INT16, T_INT32, T_INT64)
                         decoded_value = int.from_bytes(v.value, "little", signed=signed)
-                    value_preview = str(decoded_value)
-                elif v.is_array:
-                    value_preview = f"Array (Count={len(v.value)})"
-                else:  # String or Bool
+                elif not v.is_array:
                     decoded_value = (
                         v.value.decode("utf-8") if isinstance(v.value, bytes) else v.value
                     )
-                    value_preview = str(decoded_value)
-                checks.append("decode")
-            except Exception:
-                status = "FAIL"
-                checks.append("decode_fail")
+                sub_checks.append(
+                    SubCheckResult(
+                        "PASS",
+                        "decode",
+                        f"Value was successfully decoded as {type_name} ({v.type}).",
+                    )
+                )
+            except Exception as e:
+                sub_checks.append(
+                    SubCheckResult("FAIL", "decode", f"Failed to decode value as {type_name}: {e}")
+                )
 
             # 4. Spec Conformance (Registry) Checks
             spec = KNOWN_KEYS.get(v.key)
             if spec:
-                checks.append("known_key")
-                # Type check
+                sub_checks.append(
+                    SubCheckResult("PASS", "known_key", "Key is a standard GGUF-defined key.")
+                )
                 if spec["type"] == type_name:
-                    checks.append("spec_type")
+                    sub_checks.append(
+                        SubCheckResult(
+                            "PASS", "spec_type", f"Declared type '{type_name}' matches spec."
+                        )
+                    )
                 else:
-                    status = "FAIL"
-                    checks.append("spec_type_fail")
-                # Range/value checks
+                    sub_checks.append(
+                        SubCheckResult(
+                            "FAIL",
+                            "spec_type",
+                            f"Type mismatch. Spec requires '{spec['type']}', but file has '{type_name}'.",
+                        )
+                    )
                 if decoded_value is not None:
                     if "min" in spec and decoded_value < spec["min"]:
-                        status = "FAIL"
-                        checks.append("range_fail")
+                        sub_checks.append(
+                            SubCheckResult(
+                                "FAIL",
+                                "range",
+                                f"Decoded value '{decoded_value}' is invalid. Spec requires a minimum of {spec['min']}.",
+                            )
+                        )
                     elif "multiple_of" in spec and decoded_value % spec["multiple_of"] != 0:
-                        status = "FAIL"
-                        checks.append("multiple_fail")
+                        sub_checks.append(
+                            SubCheckResult(
+                                "FAIL",
+                                "range",
+                                f"Decoded value '{decoded_value}' is invalid. Spec requires a multiple of {spec['multiple_of']}.",
+                            )
+                        )
                     else:
-                        checks.append("range")
+                        sub_checks.append(
+                            SubCheckResult(
+                                "PASS",
+                                "range",
+                                f"Decoded value '{decoded_value}' is within the specified range.",
+                            )
+                        )
             else:
-                status = "WARN"
-                checks.append("unknown_key")
+                sub_checks.append(
+                    SubCheckResult(
+                        "WARN",
+                        "unknown_key",
+                        "This key is not part of the official GGUF specification.",
+                    )
+                )
 
             # 5. Duplicate Check
             if v.key in seen_keys:
-                # This is a simplified check; a true deep check would compare raw bytes
                 if seen_keys[v.key].value == v.value:
-                    status = "WARN" if status != "FAIL" else "FAIL"
-                    checks.append("duplicate_ok")
+                    sub_checks.append(
+                        SubCheckResult(
+                            "WARN",
+                            "duplicate",
+                            "Key is a non-conflicting duplicate of a previously seen key.",
+                        )
+                    )
                 else:
-                    status = "FAIL"
-                    checks.append("duplicate_conflict")
+                    sub_checks.append(
+                        SubCheckResult(
+                            "FAIL",
+                            "duplicate",
+                            "Key is a conflicting duplicate of a previously seen key.",
+                        )
+                    )
             seen_keys[v.key] = v
 
-            # Create the final finding
+            # Determine overall status
+            final_status = "PASS"
+            if any(sc.status == "FAIL" for sc in sub_checks):
+                final_status = "FAIL"
+            elif any(sc.status == "WARN" for sc in sub_checks):
+                final_status = "WARN"
+
             report.add(
                 f"kv_analysis:{v.key}",
-                ok=(status != "FAIL"),
-                details="",
+                ok=(final_status != "FAIL"),
+                details=f"Overall Status: {final_status}",
                 **{
-                    "status": status,
+                    "sub_checks": sub_checks,
                     "key": v.key,
                     "start": v.offset_start,
                     "end": v.offset_end,
                     "size": v.offset_end - v.offset_start,
-                    "type": f"{type_name} ({v.type})",
-                    "value_preview": (
-                        value_preview.replace("Ġ", " ")[:40] + "..."
-                        if len(value_preview) > 40
-                        else value_preview.replace("Ġ", " ")
-                    ),
-                    "checks": ", ".join(checks),
                 },
             )
 
