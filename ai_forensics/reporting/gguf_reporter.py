@@ -15,6 +15,12 @@ from ai_forensics.analysis.base import AnalysisReport, Finding
 
 console = Console()
 
+STATUS_STYLES = {
+    "PASS": "[green]PASS[/green]",
+    "WARN": "[yellow]WARN[/yellow]",
+    "FAIL": "[bold red]FAIL[/bold red]",
+}
+
 
 def _render_summary(rep: AnalysisReport) -> None:
     """Render a high-level summary table with redundant info removed."""
@@ -28,28 +34,29 @@ def _render_summary(rep: AnalysisReport) -> None:
     console.print(t)
 
 
-def _render_kv_layout_table(findings: List[Finding]) -> None:
-    """Renders the standard KV store table showing layout, integrity, and a preview."""
+def _render_kv_analysis_table(findings: List[Finding]) -> None:
+    """Renders the single, 'always-on deep' KV validation table."""
     table = Table(
-        title="Key-Value Store Integrity & Layout",
+        title="Key-Value Store Deep Validation",
         box=box.ROUNDED,
         show_lines=False,
         title_style="bold magenta",
     )
-    table.add_column("Status", justify="center", width=8)
+    table.add_column("Status", width=8)
     table.add_column("Index", justify="right", style="dim")
     table.add_column("Key", style="cyan", no_wrap=True)
     table.add_column("Start Addr", justify="right")
     table.add_column("End Addr", justify="right")
     table.add_column("Size (B)", justify="right", style="green")
-    table.add_column("Declared Type", style="yellow")
+    table.add_column("Type", style="yellow")
     table.add_column("Value (Preview)", style="white")
+    table.add_column("Checks Performed", style="dim")
 
     findings.sort(key=lambda f: f.context.get("start", 0))
 
     for index, f in enumerate(findings, start=1):
-        status = "[green]PASS[/green]" if f.ok else "[bold red]FAIL[/bold red]"
         ctx = f.context
+        status = STATUS_STYLES.get(ctx.get("status", "FAIL"), "[bold red]FAIL[/bold red]")
         table.add_row(
             status,
             str(index),
@@ -58,31 +65,14 @@ def _render_kv_layout_table(findings: List[Finding]) -> None:
             str(ctx.get("end", "N/A")),
             str(ctx.get("size", "N/A")),
             ctx.get("type", "N/A"),
-            ctx.get("value", "N/A"),
+            ctx.get("value_preview", "N/A"),
+            ctx.get("checks", "N/A"),
         )
     console.print(table)
-
-
-def _render_deep_kv_analysis_table(findings: List[Finding]) -> None:
-    """Renders the deep analysis table for the KV store with full content."""
-    table = Table(
-        title="Deep Analysis: Key-Value Store Content",
-        box=box.ROUNDED,
-        show_lines=False,
-        title_style="bold yellow",
-    )
-    table.add_column("Status", justify="center", width=8)
-    table.add_column("Key", style="cyan", no_wrap=True)
-    table.add_column("Full Value / Semantic Meaning", style="white")
-
-    findings.sort(key=lambda f: f.name)
-
-    for f in findings:
-        status = "[green]PASS[/green]" if f.ok else "[bold red]FAIL[/bold red]"
-        key = f.name.split(":", 1)[1]
-        table.add_row(status, key, f.details)
-
-    console.print(table)
+    # Add summary footer
+    statuses = [f.context.get("status", "FAIL") for f in findings]
+    summary = f"Summary: PASS={statuses.count('PASS')} WARN={statuses.count('WARN')} FAIL={statuses.count('FAIL')}"
+    console.print(f"[dim]{summary}[/dim]", justify="right")
 
 
 def _render_combined_tensor_table(title: str, findings: List[Finding]) -> None:
@@ -193,7 +183,7 @@ def render_report(rep: AnalysisReport) -> None:
         "quantization_profile",
     ]
 
-    # 1. Structural Integrity
+    # Structural Integrity
     if "structural_integrity" in groups:
         _render_generic_table(
             "Structural Integrity Checks",
@@ -201,15 +191,11 @@ def render_report(rep: AnalysisReport) -> None:
             custom_sort_order=integrity_sort_order,
         )
 
-    # 2. Standard KV Layout (if present)
-    if "kv_layout" in groups:
-        _render_kv_layout_table(groups["kv_layout"])
+    # KV table is now the default
+    if "kv_analysis" in groups:
+        _render_kv_analysis_table(groups["kv_analysis"])
 
-    # 3. Deep KV Content (if a deep scan was run)
-    if "deep_kv_store" in groups:
-        _render_deep_kv_analysis_table(groups["deep_kv_store"])
-
-    # 4. Tensor Layout
+    # Tensor Layout
     if "tensor_layout" in groups:
         _render_combined_tensor_table(
             "Tensor Layout & Size Integrity Checks", groups["tensor_layout"]

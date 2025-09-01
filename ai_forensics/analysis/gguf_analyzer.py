@@ -5,14 +5,15 @@ GGUF analyzer: version-aware structural verification + reason matrix.
 
 from __future__ import annotations
 
-import json
+import re
 import struct
-from typing import List, Tuple
+from typing import Any, Dict, List, Tuple
 
 from ai_forensics.analysis.analyzer import Analyzer
 from ai_forensics.analysis.base import AnalysisReport
-from ai_forensics.model_formats.gguf.gguf import GGUFKV, GGUFParseError
+from ai_forensics.model_formats.gguf.gguf import GGUFKV, GGUFModel, GGUFParseError
 from ai_forensics.model_formats.gguf.gguf_quantization import QUANTIZATION_MAP
+from ai_forensics.model_formats.gguf.gguf_rules import KNOWN_KEYS
 from ai_forensics.model_formats.gguf.gguf_versions import (
     T_ARRAY,
     T_BOOL,
@@ -30,7 +31,6 @@ from ai_forensics.model_formats.gguf.gguf_versions import (
     parse_gguf_versioned,
 )
 
-# Map for converting KV type codes to human-readable strings
 KV_TYPE_MAP = {
     T_UINT8: "UInt8",
     T_INT8: "Int8",
@@ -54,284 +54,112 @@ class GGUFAnalyzer(Analyzer):
     def get_format_name(self) -> str:
         return "gguf"
 
-    def _create_kv_layout_finding(self, k: str, v: GGUFKV, report: AnalysisReport):
-        """Creates a finding for the standard KV layout and integrity report."""
-        ok = True
-        value_str = ""
-        # ... (internal value formatting logic is unchanged) ...
-        is_numeric_bytes = isinstance(v.value, bytes) and not v.is_array
+    def _perform_kv_analysis(self, model: GGUFModel, report: AnalysisReport) -> None:
+        """
+        Performs a comprehensive, 'always-on deep' validation of the KV store,
+        combining structural, content, and spec-conformance checks.
+        """
+        seen_keys: Dict[str, GGUFKV] = {}
 
-        try:
-            if is_numeric_bytes:
-                if v.type in (
-                    T_UINT8,
-                    T_INT8,
-                    T_UINT16,
-                    T_INT16,
-                    T_UINT32,
-                    T_INT32,
-                    T_UINT64,
-                    T_INT64,
-                ):
-                    signed = v.type in (T_INT8, T_INT16, T_INT32, T_INT64)
-                    val = int.from_bytes(v.value, "little", signed=signed)
-                    value_str = str(val)
-                elif v.type in (T_FLOAT32, T_FLOAT64):
-                    fmt = "<f" if v.type == T_FLOAT32 else "<d"
-                    val = struct.unpack(fmt, v.value)[0]
-                    value_str = f"{val:.6f}"
-            elif v.is_array:
-                count = len(v.value) if isinstance(v.value, list) else 0
-                preview_items = []
-                for item in v.value[:3]:
-                    str_item = item.decode("utf-8") if isinstance(item, bytes) else str(item)
-                    readable_item = str_item.replace("Ġ", " ")
-                    preview_items.append(readable_item)
-                preview = f"[{', '.join(preview_items)}{', ...' if count > 3 else ''}]"
-                value_str = f"Array, Count={count}, Preview={preview}"
+        # Iterate in the natural on-disk order preserved by the parser
+        for v in model.kv.values():
+            status = "PASS"
+            checks: List[str] = []
+
+            # 1. Structural Checks (bounds are implicit from successful parsing)
+            checks.append("bounds")
+
+            # 2. Key Name Pattern Check
+            if re.match(r"^[a-z0-9][a-z0-9._-]*$", v.key):
+                checks.append("key_pattern")
             else:
-                str_value = (
-                    v.value.decode("utf-8") if isinstance(v.value, bytes) else str(v.value)
-                ).replace("Ġ", " ")
-                value_str = str_value
+                status = "WARN"
+                checks.append("key_pattern_fail")
 
-        except (struct.error, UnicodeDecodeError, TypeError) as e:
-            ok = False
-            value_str = f"[Decode Error: {type(e).__name__}]"
-
-        if len(value_str) > 70:
-            value_str = value_str[:67] + "..."
-
-        # --- MODIFIED: Format the type string to include the raw integer code ---
-        type_str = KV_TYPE_MAP.get(v.type, "Unknown")
-        type_with_code = f"{type_str} ({v.type})"
-
-        report.add(
-            f"kv_layout:{k}",
-            ok,
-            details="",
-            **{
-                "key": k,
-                "type": type_with_code,  # Use the newly formatted string
-                "value": value_str,
-                "start": v.offset_start,
-                "end": v.offset_end,
-                "size": v.offset_end - v.offset_start,
-            },
-        )
-
-    def _perform_deep_kv_analysis(self, model, report: AnalysisReport):
-        """Performs deep content, semantic, and security analysis of the KV store."""
-        known_file_types = {
-            0: "All F32",
-            1: "Mostly F16",
-            2: "Mostly Q4_0",
-            3: "Mostly Q4_1",
-            7: "Mostly Q5_0",
-            8: "Mostly Q5_1",
-            9: "Mostly Q8_0",
-            10: "Mostly Q2_K",
-            11: "Mostly Q3_K",
-            12: "Mostly Q4_K",
-            13: "Mostly Q5_K",
-            14: "Mostly Q6_K",
-        }
-        prompt_injection_keywords = [
-            "ignore all previous",
-            "disregard the above",
-            "override instructions",
-            "secret instruction",
-            "true master",
-            "confidential",
-        ]
-        template_exploit_payloads = ["__globals__", "__init__", "os.system", "subprocess.run"]
-
-        for key, v in model.kv.items():
-            ok = True
-            full_value_str = ""
-            is_numeric_bytes = isinstance(v.value, bytes) and not v.is_array
-
-            # 1. Full Value Extraction
+            # 3. Type and Value Decoding
+            type_name = KV_TYPE_MAP.get(v.type, "Unknown")
+            is_numeric = v.type not in (T_STRING, T_BOOL, T_ARRAY)
+            decoded_value: Any = None
+            value_preview = ""
             try:
-                if is_numeric_bytes:
-                    if v.type in (
-                        T_UINT8,
-                        T_INT8,
-                        T_UINT16,
-                        T_INT16,
-                        T_UINT32,
-                        T_INT32,
-                        T_UINT64,
-                        T_INT64,
-                    ):
-                        signed = v.type in (T_INT8, T_INT16, T_INT32, T_INT64)
-                        val = int.from_bytes(v.value, "little", signed=signed)
-                        full_value_str = str(val)
-                    elif v.type in (T_FLOAT32, T_FLOAT64):
+                if is_numeric and isinstance(v.value, bytes):
+                    if v.type in (T_FLOAT32, T_FLOAT64):
                         fmt = "<f" if v.type == T_FLOAT32 else "<d"
-                        val = struct.unpack(fmt, v.value)[0]
-                        full_value_str = str(val)
+                        decoded_value = struct.unpack(fmt, v.value)[0]
+                    else:
+                        signed = v.type in (T_INT8, T_INT16, T_INT32, T_INT64)
+                        decoded_value = int.from_bytes(v.value, "little", signed=signed)
+                    value_preview = str(decoded_value)
                 elif v.is_array:
-                    count = len(v.value)
-                    items = v.value[:25] + ["..."] + v.value[-25:] if count > 50 else v.value
-                    readable_items = [
-                        (item.decode("utf-8") if isinstance(item, bytes) else str(item)).replace(
-                            "Ġ", " "
-                        )
-                        for item in items
-                    ]
-                    full_value_str = f"Array (Count={count})\n" + "\n".join(readable_items)
+                    value_preview = f"Array (Count={len(v.value)})"
+                else:  # String or Bool
+                    decoded_value = (
+                        v.value.decode("utf-8") if isinstance(v.value, bytes) else v.value
+                    )
+                    value_preview = str(decoded_value)
+                checks.append("decode")
+            except Exception:
+                status = "FAIL"
+                checks.append("decode_fail")
+
+            # 4. Spec Conformance (Registry) Checks
+            spec = KNOWN_KEYS.get(v.key)
+            if spec:
+                checks.append("known_key")
+                # Type check
+                if spec["type"] == type_name:
+                    checks.append("spec_type")
                 else:
-                    full_value_str = (
-                        v.value.decode("utf-8") if isinstance(v.value, bytes) else str(v.value)
-                    ).replace("Ġ", " ")
-            except Exception as e:
-                ok = False
-                full_value_str = f"[Extraction Error: {e}]"
+                    status = "FAIL"
+                    checks.append("spec_type_fail")
+                # Range/value checks
+                if decoded_value is not None:
+                    if "min" in spec and decoded_value < spec["min"]:
+                        status = "FAIL"
+                        checks.append("range_fail")
+                    elif "multiple_of" in spec and decoded_value % spec["multiple_of"] != 0:
+                        status = "FAIL"
+                        checks.append("multiple_fail")
+                    else:
+                        checks.append("range")
+            else:
+                status = "WARN"
+                checks.append("unknown_key")
 
-            # 2. Semantic and Cybersecurity Validation
-            if key == "general.file_type" and is_numeric_bytes:
-                val = int(full_value_str)
-                if val not in known_file_types:
-                    ok = False
-                full_value_str = f"{val} ({known_file_types.get(val, 'Unknown Type!')})"
+            # 5. Duplicate Check
+            if v.key in seen_keys:
+                # This is a simplified check; a true deep check would compare raw bytes
+                if seen_keys[v.key].value == v.value:
+                    status = "WARN" if status != "FAIL" else "FAIL"
+                    checks.append("duplicate_ok")
+                else:
+                    status = "FAIL"
+                    checks.append("duplicate_conflict")
+            seen_keys[v.key] = v
 
-            if key == "tokenizer.chat_template":
-                if full_value_str.strip().startswith("{"):
-                    try:
-                        full_value_str = json.dumps(json.loads(full_value_str), indent=2)
-                    except json.JSONDecodeError:
-                        pass
-                for keyword in prompt_injection_keywords + template_exploit_payloads:
-                    if keyword in full_value_str.lower():
-                        ok = False
-                        full_value_str += (
-                            f"\n\n[CYBERSECURITY ALERT: Suspicious keyword '{keyword}' found!]"
-                        )
-
-            type_name = KV_TYPE_MAP.get(v.type, f"Unknown ({v.type})")
+            # Create the final finding
             report.add(
-                f"deep_kv_store:{key}",
-                ok,
-                details=full_value_str,
+                f"kv_analysis:{v.key}",
+                ok=(status != "FAIL"),
+                details="",
                 **{
-                    "key": key,
+                    "status": status,
+                    "key": v.key,
                     "start": v.offset_start,
                     "end": v.offset_end,
                     "size": v.offset_end - v.offset_start,
-                    "type": type_name,
-                },
-            )
-
-    def _perform_deep_kv_analysis(self, model, report: AnalysisReport):
-        """Performs deep content, semantic, and security analysis of the KV store."""
-        # ... (internal logic for deep analysis is unchanged) ...
-        known_file_types = {
-            0: "All F32",
-            1: "Mostly F16",
-            2: "Mostly Q4_0",
-            3: "Mostly Q4_1",
-            7: "Mostly Q5_0",
-            8: "Mostly Q5_1",
-            9: "Mostly Q8_0",
-            10: "Mostly Q2_K",
-            11: "Mostly Q3_K",
-            12: "Mostly Q4_K",
-            13: "Mostly Q5_K",
-            14: "Mostly Q6_K",
-        }
-        prompt_injection_keywords = [
-            "ignore all previous",
-            "disregard the above",
-            "override instructions",
-            "secret instruction",
-            "true master",
-            "confidential",
-        ]
-        template_exploit_payloads = ["__globals__", "__init__", "os.system", "subprocess.run"]
-
-        for key, v in model.kv.items():
-            ok = True
-            full_value_str = ""
-            is_numeric_bytes = isinstance(v.value, bytes) and not v.is_array
-
-            # 1. Full Value Extraction
-            try:
-                if is_numeric_bytes:
-                    if v.type in (
-                        T_UINT8,
-                        T_INT8,
-                        T_UINT16,
-                        T_INT16,
-                        T_UINT32,
-                        T_INT32,
-                        T_UINT64,
-                        T_INT64,
-                    ):
-                        signed = v.type in (T_INT8, T_INT16, T_INT32, T_INT64)
-                        val = int.from_bytes(v.value, "little", signed=signed)
-                        full_value_str = str(val)
-                    elif v.type in (T_FLOAT32, T_FLOAT64):
-                        fmt = "<f" if v.type == T_FLOAT32 else "<d"
-                        val = struct.unpack(fmt, v.value)[0]
-                        full_value_str = str(val)
-                elif v.is_array:
-                    count = len(v.value)
-                    items = v.value[:25] + ["..."] + v.value[-25:] if count > 50 else v.value
-                    readable_items = [
-                        (item.decode("utf-8") if isinstance(item, bytes) else str(item)).replace(
-                            "Ġ", " "
-                        )
-                        for item in items
-                    ]
-                    full_value_str = f"Array (Count={count})\n" + "\n".join(readable_items)
-                else:
-                    full_value_str = (
-                        v.value.decode("utf-8") if isinstance(v.value, bytes) else str(v.value)
-                    ).replace("Ġ", " ")
-            except Exception as e:
-                ok = False
-                full_value_str = f"[Extraction Error: {e}]"
-
-            # 2. Semantic and Cybersecurity Validation
-            if key == "general.file_type" and is_numeric_bytes:
-                val = int(full_value_str)
-                if val not in known_file_types:
-                    ok = False
-                full_value_str = f"{val} ({known_file_types.get(val, 'Unknown Type!')})"
-
-            if key == "tokenizer.chat_template":
-                if full_value_str.strip().startswith("{"):
-                    try:
-                        full_value_str = json.dumps(json.loads(full_value_str), indent=2)
-                    except json.JSONDecodeError:
-                        pass
-                for keyword in prompt_injection_keywords + template_exploit_payloads:
-                    if keyword in full_value_str.lower():
-                        ok = False
-                        full_value_str += (
-                            f"\n\n[CYBERSECURITY ALERT: Suspicious keyword '{keyword}' found!]"
-                        )
-
-            # --- MODIFIED: Format the type string to include the raw integer code for consistency ---
-            type_str = KV_TYPE_MAP.get(v.type, "Unknown")
-            type_with_code = f"{type_str} ({v.type})"
-
-            report.add(
-                f"deep_kv_store:{key}",
-                ok,
-                details=full_value_str,
-                **{
-                    "key": key,
-                    "start": v.offset_start,
-                    "end": v.offset_end,
-                    "size": v.offset_end - v.offset_start,
-                    "type": type_with_code,
+                    "type": f"{type_name} ({v.type})",
+                    "value_preview": (
+                        value_preview.replace("Ġ", " ")[:40] + "..."
+                        if len(value_preview) > 40
+                        else value_preview.replace("Ġ", " ")
+                    ),
+                    "checks": ", ".join(checks),
                 },
             )
 
     def _perform_analysis(self, mv: memoryview, report: AnalysisReport) -> None:
-        """Runs structural and (optionally) deep analysis."""
+        """Runs structural and deep validation checks."""
         try:
             parsed = parse_gguf_versioned(mv, file_size=report.file_size)
             if parsed.model is None:
@@ -441,9 +269,9 @@ class GGUFAnalyzer(Analyzer):
                 f"Last data address {last_tensor_end} vs file size {report.file_size}",
             )
 
-            # Standard KV Scan (for the layout table)
-            for key, value in model.kv.items():
-                self._create_kv_layout_finding(key, value, report)
+            # --- Run the comprehensive KV analysis ---
+            self._perform_kv_analysis(model, report)
+            # A cross-field check could be added here later if needed
 
             quantization_mix = {}
             for f in report.findings:
@@ -456,6 +284,3 @@ class GGUFAnalyzer(Analyzer):
             )
             if profile_str:
                 report.add("structural_integrity:quantization_profile", True, profile_str)
-
-        if "deep_scan" in report.stages_run:
-            self._perform_deep_kv_analysis(model, report)

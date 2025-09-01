@@ -46,9 +46,6 @@ def _build_parser() -> argparse.ArgumentParser:
     sp_scan.add_argument("path", help="Path to model file (.gguf | .safetensors)")
     sp_scan.add_argument("--debug", action="store_true", help="Enable debug logging")
     sp_scan.add_argument(
-        "--deep", action="store_true", help="Perform deep content analysis (slower, more detailed)."
-    )
-    sp_scan.add_argument(
         "--json-out", type=str, default=None, help="Write JSON report to this path"
     )
     sp_scan.add_argument(
@@ -107,12 +104,6 @@ def main(argv: Optional[list[str]] = None) -> int:
         # Run the analysis
         # Determine which stages to run. If the user provided none, default to all.
         stages_to_run = args.stage or AVAILABLE_STAGES
-
-        # Inject deep_scan stage if --deep is used
-        if args.deep:
-            if "deep_scan" not in stages_to_run:
-                stages_to_run.append("deep_scan")
-            console.print("[bold yellow]Deep analysis enabled.[/bold yellow]")
 
         console.print(f"[dim]Running stages: {', '.join(stages_to_run)}...[/dim]")
 
