@@ -34,6 +34,7 @@ def _render_combined_tensor_table(title: str, findings: List[Finding]) -> None:
     """Renders a single, combined table for tensor layout, bounds, and size integrity."""
     table = Table(title=title, box=box.ROUNDED, show_lines=False, title_style="bold magenta")
     table.add_column("Status", justify="center", width=8)
+    table.add_column("Index", justify="right", style="dim")
     table.add_column("Tensor Name", style="cyan", no_wrap=True)
     table.add_column("Start Address", justify="right", style="white")
     table.add_column("End Address", justify="right", style="white")
@@ -44,7 +45,7 @@ def _render_combined_tensor_table(title: str, findings: List[Finding]) -> None:
 
     findings.sort(key=lambda f: f.context.get("start", 0))
 
-    for f in findings:
+    for index, f in enumerate(findings, start=1):
         status = "[green]PASS[/green]" if f.ok else "[bold red]FAIL[/bold red]"
         tensor_name = f.name.split(":", 1)[1]
         ctx = f.context
@@ -57,6 +58,7 @@ def _render_combined_tensor_table(title: str, findings: List[Finding]) -> None:
 
         table.add_row(
             status,
+            str(index),
             tensor_name,
             str(ctx.get("start", "N/A")),
             str(ctx.get("end", "N/A")),
