@@ -47,6 +47,9 @@ class GGUFModel:
     n_tensors: int
     kv: Dict[str, GGUFKV]
     tensors: List[GGUFTensorInfo]
+    header_end_offset: int
+    kv_end_offset: int
+    tensor_info_end_offset: int
     data_offset: int  # absolute offset of data section
     file_size: int
 

@@ -129,24 +129,32 @@ def _render_size_consistency_table(title: str, findings: List[Finding]) -> None:
     console.print(table)
 
 
-def _render_generic_table(title: str, findings: List[Finding]) -> None:
-    """Generic renderer for all other finding groups."""
+def _render_generic_table(
+    title: str, findings: List[Finding], *, custom_sort_order: List[str] = None
+) -> None:
+    """Generic renderer for finding groups, with optional custom sorting."""
     table = Table(title=title, box=box.ROUNDED, show_lines=False, title_style="bold magenta")
     table.add_column("Status", justify="center", width=8)
     table.add_column("Check", style="cyan", no_wrap=True)
     table.add_column("Details", style="white")
 
-    has_context = any(f.context for f in findings)
-    if has_context:
-        table.add_column("Context", style="yellow")
+    # Custom Sorting Logic
+    if custom_sort_order:
+        # Create a mapping from name to sort index, defaulting to a large number
+        sort_map = {name: i for i, name in enumerate(custom_sort_order)}
+        findings.sort(key=lambda f: sort_map.get(f.name.split(":", 1)[-1], 999))
+    else:
+        findings.sort(key=lambda x: x.name)
 
-    for f in sorted(findings, key=lambda x: x.name):
+    for f in findings:
         status = "[green]PASS[/green]" if f.ok else "[bold red]FAIL[/bold red]"
-        check_name = f.name.split(":", 1)[1] if ":" in f.name else f.name
+        check_name = f.name.split(":", 1)[-1].replace("_", " ").title()
+
+        # Special case for "KV Store" to keep it uppercase
+        if check_name == "Kv Store":
+            check_name = "KV Store"
+
         row_data = [status, check_name, f.details]
-        if has_context:
-            context_str = "\n".join([f"[dim]{k}:[/dim] {v}" for k, v in f.context.items()])
-            row_data.append(context_str)
         table.add_row(*row_data)
 
     console.print(table)
@@ -159,49 +167,48 @@ def render_findings(rep: AnalysisReport) -> None:
 
     groups = defaultdict(list)
     for f in rep.findings:
-        # Group findings by the prefix before the first colon
         if ":" in f.name:
             group_name = f.name.split(":", 1)[0]
             groups[group_name].append(f)
-        else:
-            groups["miscellaneous"].append(f)
 
-    # Define the explicit order in which tables should be rendered
+    # Simplified group order and defined custom sort for integrity table ---
     group_order = [
-        "file_layout",
         "structural_integrity",
         "tensor_bounds",
         "tensor_size_consistency",
         "quantization_known",
         "quantization_alignment",
-        "overall_result",
     ]
 
-    # Render tables in the predefined order
+    integrity_sort_order = [
+        "alignment_power_of_two",
+        "magic_version",
+        "metadata_offset_bounds",
+        "GGUF_Header",
+        "KV_Store",
+        "Tensor_Info",
+        "data_offset_bounds",
+        "tensor_offsets_sorted",
+        "tensor_non_overlap",
+        "quantization_profile",
+        "file_address_space_boundary",
+    ]
+
     for group_name in group_order:
         if group_name in groups:
             findings_in_group = groups[group_name]
-            title = group_name.replace("_", " ").title()
+            title = group_name.replace("_", " ").title() + " Checks"
 
-            # Use the correct specialized renderer for each group
-            if group_name == "file_layout":
-                _render_file_layout_table(title, findings_in_group)
-            elif group_name == "overall_result":
-                _render_overall_result_table(title, findings_in_group)
+            if group_name == "structural_integrity":
+                _render_generic_table(
+                    title, findings_in_group, custom_sort_order=integrity_sort_order
+                )
             elif group_name == "tensor_bounds":
-                _render_tensor_bounds_table(f"{title} Checks", findings_in_group)
+                _render_tensor_bounds_table(title, findings_in_group)
             elif group_name == "tensor_size_consistency":
-                _render_size_consistency_table(f"{title} Checks", findings_in_group)
+                _render_size_consistency_table(title, findings_in_group)
             else:
-                _render_generic_table(f"{title} Checks", findings_in_group)
-
-            # Remove the group after rendering to handle any remaining groups later
-            del groups[group_name]
-
-    # Render any remaining groups that were not in the explicit order
-    for group_name, findings_in_group in sorted(groups.items()):
-        title = group_name.replace("_", " ").title() + " Checks"
-        _render_generic_table(title, findings_in_group)
+                _render_generic_table(title, findings_in_group)
 
 
 def render_reason_matrix(rep: AnalysisReport) -> None:

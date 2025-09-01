@@ -165,6 +165,9 @@ def _parse_by_version(buf: memoryview, *, file_size: int, version: int, endian: 
         # v2/v3: 64-bit signed counts in practice
         (n_tensors,), off = _unpack(buf, off, "<q" if endian == "LE" else ">q")
         (n_kv,), off = _unpack(buf, off, "<q" if endian == "LE" else ">q")
+
+    header_end_offset = off  # Mark end of header/start of KV store
+
     if n_tensors < 0 or n_kv < 0:
         raise GGUFParseError("Negative counts in header")
 
@@ -172,6 +175,8 @@ def _parse_by_version(buf: memoryview, *, file_size: int, version: int, endian: 
     for _ in range(n_kv):
         item, off = _parse_kv(buf, off, endian, size_fmt)
         kv[item.key] = item
+
+    kv_end_offset = off  # Mark end of KV store/start of tensor info
 
     alignment = 32
     if "general.alignment" in kv:
@@ -183,6 +188,8 @@ def _parse_by_version(buf: memoryview, *, file_size: int, version: int, endian: 
     for _ in range(n_tensors):
         ti, off = _parse_tensor_info(buf, off, endian, size_fmt)
         tensors.append(ti)
+
+    tensor_info_end_offset = off  # Mark end of tensor info
 
     data_start = _align_up(off, alignment)
     if data_start > file_size:
@@ -196,6 +203,9 @@ def _parse_by_version(buf: memoryview, *, file_size: int, version: int, endian: 
         n_tensors=int(n_tensors),
         kv=kv,
         tensors=tensors,
+        header_end_offset=header_end_offset,
+        kv_end_offset=kv_end_offset,
+        tensor_info_end_offset=tensor_info_end_offset,
         data_offset=data_start,
         file_size=file_size,
     )
