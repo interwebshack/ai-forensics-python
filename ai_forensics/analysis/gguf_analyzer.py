@@ -14,6 +14,7 @@ from ai_forensics.analysis.base import AnalysisReport
 from ai_forensics.model_formats.gguf.gguf import GGUFKV, GGUFParseError
 from ai_forensics.model_formats.gguf.gguf_quantization import QUANTIZATION_MAP
 from ai_forensics.model_formats.gguf.gguf_versions import (
+    T_ARRAY,
     T_BOOL,
     T_FLOAT32,
     T_FLOAT64,
@@ -29,6 +30,23 @@ from ai_forensics.model_formats.gguf.gguf_versions import (
     parse_gguf_versioned,
 )
 
+# Map for converting KV type codes to human-readable strings
+KV_TYPE_MAP = {
+    T_UINT8: "UInt8",
+    T_INT8: "Int8",
+    T_UINT16: "UInt16",
+    T_INT16: "Int16",
+    T_UINT32: "UInt32",
+    T_INT32: "Int32",
+    T_UINT64: "UInt64",
+    T_INT64: "Int64",
+    T_FLOAT32: "Float32",
+    T_FLOAT64: "Float64",
+    T_BOOL: "Bool",
+    T_STRING: "String",
+    T_ARRAY: "Array",
+}
+
 
 class GGUFAnalyzer(Analyzer):
     """Analyzer implementation for GGUF files."""
@@ -40,6 +58,7 @@ class GGUFAnalyzer(Analyzer):
         """Creates a finding for the standard KV layout and integrity report."""
         ok = True
         value_str = ""
+        # ... (internal value formatting logic is unchanged) ...
         is_numeric_bytes = isinstance(v.value, bytes) and not v.is_array
 
         try:
@@ -83,13 +102,17 @@ class GGUFAnalyzer(Analyzer):
         if len(value_str) > 70:
             value_str = value_str[:67] + "..."
 
+        # --- MODIFIED: Format the type string to include the raw integer code ---
+        type_str = KV_TYPE_MAP.get(v.type, "Unknown")
+        type_with_code = f"{type_str} ({v.type})"
+
         report.add(
             f"kv_layout:{k}",
             ok,
             details="",
             **{
                 "key": k,
-                "type": v.type.name if hasattr(v.type, "name") else str(v.type),
+                "type": type_with_code,  # Use the newly formatted string
                 "value": value_str,
                 "start": v.offset_start,
                 "end": v.offset_end,
@@ -186,6 +209,7 @@ class GGUFAnalyzer(Analyzer):
                             f"\n\n[CYBERSECURITY ALERT: Suspicious keyword '{keyword}' found!]"
                         )
 
+            type_name = KV_TYPE_MAP.get(v.type, f"Unknown ({v.type})")
             report.add(
                 f"deep_kv_store:{key}",
                 ok,
@@ -195,7 +219,114 @@ class GGUFAnalyzer(Analyzer):
                     "start": v.offset_start,
                     "end": v.offset_end,
                     "size": v.offset_end - v.offset_start,
-                    "type": v.type.name if hasattr(v.type, "name") else str(v.type),
+                    "type": type_name,
+                },
+            )
+
+    def _perform_deep_kv_analysis(self, model, report: AnalysisReport):
+        """Performs deep content, semantic, and security analysis of the KV store."""
+        # ... (internal logic for deep analysis is unchanged) ...
+        known_file_types = {
+            0: "All F32",
+            1: "Mostly F16",
+            2: "Mostly Q4_0",
+            3: "Mostly Q4_1",
+            7: "Mostly Q5_0",
+            8: "Mostly Q5_1",
+            9: "Mostly Q8_0",
+            10: "Mostly Q2_K",
+            11: "Mostly Q3_K",
+            12: "Mostly Q4_K",
+            13: "Mostly Q5_K",
+            14: "Mostly Q6_K",
+        }
+        prompt_injection_keywords = [
+            "ignore all previous",
+            "disregard the above",
+            "override instructions",
+            "secret instruction",
+            "true master",
+            "confidential",
+        ]
+        template_exploit_payloads = ["__globals__", "__init__", "os.system", "subprocess.run"]
+
+        for key, v in model.kv.items():
+            ok = True
+            full_value_str = ""
+            is_numeric_bytes = isinstance(v.value, bytes) and not v.is_array
+
+            # 1. Full Value Extraction
+            try:
+                if is_numeric_bytes:
+                    if v.type in (
+                        T_UINT8,
+                        T_INT8,
+                        T_UINT16,
+                        T_INT16,
+                        T_UINT32,
+                        T_INT32,
+                        T_UINT64,
+                        T_INT64,
+                    ):
+                        signed = v.type in (T_INT8, T_INT16, T_INT32, T_INT64)
+                        val = int.from_bytes(v.value, "little", signed=signed)
+                        full_value_str = str(val)
+                    elif v.type in (T_FLOAT32, T_FLOAT64):
+                        fmt = "<f" if v.type == T_FLOAT32 else "<d"
+                        val = struct.unpack(fmt, v.value)[0]
+                        full_value_str = str(val)
+                elif v.is_array:
+                    count = len(v.value)
+                    items = v.value[:25] + ["..."] + v.value[-25:] if count > 50 else v.value
+                    readable_items = [
+                        (item.decode("utf-8") if isinstance(item, bytes) else str(item)).replace(
+                            "Ġ", " "
+                        )
+                        for item in items
+                    ]
+                    full_value_str = f"Array (Count={count})\n" + "\n".join(readable_items)
+                else:
+                    full_value_str = (
+                        v.value.decode("utf-8") if isinstance(v.value, bytes) else str(v.value)
+                    ).replace("Ġ", " ")
+            except Exception as e:
+                ok = False
+                full_value_str = f"[Extraction Error: {e}]"
+
+            # 2. Semantic and Cybersecurity Validation
+            if key == "general.file_type" and is_numeric_bytes:
+                val = int(full_value_str)
+                if val not in known_file_types:
+                    ok = False
+                full_value_str = f"{val} ({known_file_types.get(val, 'Unknown Type!')})"
+
+            if key == "tokenizer.chat_template":
+                if full_value_str.strip().startswith("{"):
+                    try:
+                        full_value_str = json.dumps(json.loads(full_value_str), indent=2)
+                    except json.JSONDecodeError:
+                        pass
+                for keyword in prompt_injection_keywords + template_exploit_payloads:
+                    if keyword in full_value_str.lower():
+                        ok = False
+                        full_value_str += (
+                            f"\n\n[CYBERSECURITY ALERT: Suspicious keyword '{keyword}' found!]"
+                        )
+
+            # --- MODIFIED: Format the type string to include the raw integer code for consistency ---
+            type_str = KV_TYPE_MAP.get(v.type, "Unknown")
+            type_with_code = f"{type_str} ({v.type})"
+
+            report.add(
+                f"deep_kv_store:{key}",
+                ok,
+                details=full_value_str,
+                **{
+                    "key": key,
+                    "start": v.offset_start,
+                    "end": v.offset_end,
+                    "size": v.offset_end - v.offset_start,
+                    "type": type_with_code,
                 },
             )
 
