@@ -21,7 +21,7 @@ from ai_forensics import __version__
 from ai_forensics.analysis import gguf_analyzer, safetensors_analyzer
 from ai_forensics.ascii import AsciiArtDisplayer
 from ai_forensics.logging import configure_logging
-from ai_forensics.reporting.console import render_report
+from ai_forensics.reporting import gguf_reporter, safetensors_reporter
 from ai_forensics.reporting.json_reporter import write_json
 
 console = Console()
@@ -93,8 +93,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         # Instantiate the appropriate analyzer
         if ext == ".gguf":
             analyzer = gguf_analyzer.GGUFAnalyzer(path)
+            reporter = gguf_reporter
         elif ext in (".safetensors", ".safetensor"):
             analyzer = safetensors_analyzer.SafeTensorsAnalyzer(path)
+            reporter = safetensors_reporter
         else:
             console.print(f"[red]Unknown file type:[/red] {ext}")
             return 2
@@ -115,7 +117,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                 style="bold cyan",
             )
         )
-        render_report(rep)
+
+        # Dispatch to the correct reporter
+        reporter.render_report(rep)
 
         if args.json_out:
             write_json(rep, args.json_out)

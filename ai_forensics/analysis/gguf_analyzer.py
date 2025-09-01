@@ -5,6 +5,7 @@ GGUF analyzer: version-aware structural verification + reason matrix.
 
 from __future__ import annotations
 
+import struct
 from typing import Dict, List, Tuple
 
 from loguru import logger
@@ -13,7 +14,21 @@ from ai_forensics.analysis.analyzer import Analyzer
 from ai_forensics.analysis.base import AnalysisReport
 from ai_forensics.model_formats.gguf.gguf import GGUFParseError
 from ai_forensics.model_formats.gguf.gguf_quantization import QUANTIZATION_MAP
-from ai_forensics.model_formats.gguf.gguf_versions import parse_gguf_versioned
+from ai_forensics.model_formats.gguf.gguf_versions import (
+    T_BOOL,
+    T_FLOAT32,
+    T_FLOAT64,
+    T_INT8,
+    T_INT16,
+    T_INT32,
+    T_INT64,
+    T_STRING,
+    T_UINT8,
+    T_UINT16,
+    T_UINT32,
+    T_UINT64,
+    parse_gguf_versioned,
+)
 
 
 class GGUFAnalyzer(Analyzer):
@@ -21,6 +36,65 @@ class GGUFAnalyzer(Analyzer):
 
     def get_format_name(self) -> str:
         return "gguf"
+
+    def _validate_and_format_kv(self, k, v, report: AnalysisReport):
+        """Validates KV entries and creates findings."""
+        # Type validation check
+        ok = True
+        value_str = ""
+        # The parser stores numerics as raw bytes, but strings and bools are pre-converted.
+        is_numeric_bytes = isinstance(v.value, bytes) and not v.is_array
+
+        try:
+            if is_numeric_bytes:
+                if v.type in (
+                    T_UINT8,
+                    T_INT8,
+                    T_UINT16,
+                    T_INT16,
+                    T_UINT32,
+                    T_INT32,
+                    T_UINT64,
+                    T_INT64,
+                ):
+                    # Check if the endianness is LE, as GGUF specifies
+                    signed = v.type in (T_INT8, T_INT16, T_INT32, T_INT64)
+                    val = int.from_bytes(v.value, "little", signed=signed)
+                    value_str = str(val)
+                elif v.type in (T_FLOAT32, T_FLOAT64):
+                    fmt = "<f" if v.type == T_FLOAT32 else "<d"
+                    val = struct.unpack(fmt, v.value)[0]
+                    value_str = f"{val:.6f}"
+                else:
+                    value_str = "Unhandled numeric bytes type"
+                    ok = False
+            elif v.is_array:
+                # Provide a more useful summary for arrays
+                count = len(v.value) if isinstance(v.value, list) else 0
+                preview = f"[{', '.join(map(str, v.value[:3]))}{', ...' if count > 3 else ''}]"
+                value_str = f"Array, Count={count}, Preview={preview}"
+            else:
+                # Handle pre-converted types (string, bool)
+                value_str = str(v.value)
+
+        except (struct.error, UnicodeDecodeError, TypeError) as e:
+            ok = False
+            value_str = f"[Decode Error: {type(e).__name__}]"
+
+        # Truncate long strings to keep the table clean
+        if len(value_str) > 70:
+            value_str = value_str[:67] + "..."
+
+        report.add(
+            f"kv_store:{k}",
+            ok,
+            details="",
+            **{
+                "key": k,
+                "type": v.type if isinstance(v.type, str) else v.type.__class__.__name__,
+                "value": value_str,
+            },
+        )
 
     def _perform_analysis(self, mv: memoryview, report: AnalysisReport) -> None:
         """Core GGUF analysis logic."""
@@ -44,7 +118,18 @@ class GGUFAnalyzer(Analyzer):
             {k: v for k, v in model.kv.items() if "profile" not in k}
         )  # Keep profile for later
 
-        # --- CONSOLIDATED STRUCTURAL INTEGRITY CHECKS ---
+        # Create dedicated findings for Model Metadata ---
+        report.add("model_metadata:Version", True, f"v{model.version} ({model.endian})")
+        report.add("model_metadata:Alignment", True, str(model.alignment))
+        report.add("model_metadata:KV_Count", True, str(model.n_kv))
+        report.add("model_metadata:Tensor_Count", True, str(model.n_tensors))
+        report.add("model_metadata:Data_Offset", True, str(model.data_offset))
+
+        # Create findings for each KV Store entry
+        for key, value in sorted(model.kv.items()):
+            self._validate_and_format_kv(key, value, report)
+
+        # CONSOLIDATED STRUCTURAL INTEGRITY CHECKS
         report.add(
             "structural_integrity:magic_version", True, f"GGUF v{model.version} ({model.endian})"
         )
@@ -88,7 +173,7 @@ class GGUFAnalyzer(Analyzer):
         bounds: List[Tuple[str, int, int]] = []
         non_overlap = True
 
-        # --- CONSOLIDATED TENSOR LAYOUT & SIZE ANALYSIS ---
+        # CONSOLIDATED TENSOR LAYOUT & SIZE ANALYSIS
         for i, ti in enumerate(order):
             start = model.data_offset + ti.offset
             next_start_abs = (
