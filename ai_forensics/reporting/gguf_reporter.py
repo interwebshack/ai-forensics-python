@@ -45,9 +45,9 @@ def _render_model_metadata_table(findings: List[Finding]) -> None:
 
 
 def _render_kv_store_table(findings: List[Finding]) -> None:
-    """Renders a detailed table for the Key-Value store with integrity checks."""
+    """Renders a detailed table for the Key-Value store with address and size info."""
     table = Table(
-        title="Key-Value Store Integrity",
+        title="Key-Value Store Integrity & Layout",
         box=box.ROUNDED,
         show_lines=False,
         title_style="bold magenta",
@@ -55,6 +55,9 @@ def _render_kv_store_table(findings: List[Finding]) -> None:
     table.add_column("Status", justify="center", width=8)
     table.add_column("Index", justify="right", style="dim")
     table.add_column("Key", style="cyan", no_wrap=True)
+    table.add_column("Start Addr", justify="right", style="white")
+    table.add_column("End Addr", justify="right", style="white")
+    table.add_column("Size (B)", justify="right", style="green")
     table.add_column("Declared Type", style="yellow")
     table.add_column("Value (Formatted)", style="white")
 
@@ -65,6 +68,9 @@ def _render_kv_store_table(findings: List[Finding]) -> None:
             status,
             str(index),
             ctx.get("key", "N/A"),
+            str(ctx.get("start", "N/A")),
+            str(ctx.get("end", "N/A")),
+            str(ctx.get("size", "N/A")),
             ctx.get("type", "N/A"),
             ctx.get("value", "N/A"),
         )
@@ -208,15 +214,34 @@ def render_report(rep: AnalysisReport) -> None:
         if ":" in f.name:
             groups[f.name.split(":", 1)[0]].append(f)
 
-    # Render tables in a GGUF-specific logical order
-    if "model_metadata" in groups:
-        _render_model_metadata_table(groups["model_metadata"])
-    if "kv_store" in groups:
-        _render_kv_store_table(groups["kv_store"])
+    integrity_sort_order = [
+        "alignment_power_of_two",
+        "magic_version",
+        "metadata_offset_bounds",
+        "Magic_Bytes",
+        "GGUF_Header",
+        "KV_Store",
+        "Tensor_Info",
+        "data_offset_bounds",
+        "tensor_offsets_sorted",
+        "tensor_non_overlap",
+        "file_address_space_boundary",
+        "quantization_profile",
+    ]
+
+    # 1. Structural Integrity
     if "structural_integrity" in groups:
         _render_generic_table(
-            "Structural Integrity Checks", groups["structural_integrity"], custom_sort_order=[...]
-        )  # Your sort order here
+            "Structural Integrity Checks",
+            groups["structural_integrity"],
+            custom_sort_order=integrity_sort_order,
+        )
+
+    # 2. Key-Value Store
+    if "kv_store" in groups:
+        _render_kv_store_table(groups["kv_store"])
+
+    # 3. Tensor Layout
     if "tensor_layout" in groups:
         _render_combined_tensor_table(
             "Tensor Layout & Size Integrity Checks", groups["tensor_layout"]

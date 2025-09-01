@@ -93,8 +93,11 @@ def _align_up(x: int, a: int) -> int:
 
 
 def _parse_kv(buf: memoryview, off: int, endian: str, size_fmt: str) -> tuple[GGUFKV, int]:
+    start_off = off  # --- CAPTURE START OFFSET ---
+
     key, off = _str(buf, off, endian, size_fmt)
     type_code, off = _i32(buf, off, endian)
+
     is_array = False
     elem_type = type_code
     count = 1
@@ -123,7 +126,18 @@ def _parse_kv(buf: memoryview, off: int, endian: str, size_fmt: str) -> tuple[GG
         value = raw
     else:
         raise GGUFParseError(f"Unknown GGUF value type {elem_type}")
-    return GGUFKV(key=key, type=elem_type, is_array=is_array, value=value), off
+
+    return (
+        GGUFKV(
+            key=key,
+            type=elem_type,
+            is_array=is_array,
+            value=value,
+            offset_start=start_off,
+            offset_end=off,
+        ),
+        off,
+    )
 
 
 def _parse_tensor_info(

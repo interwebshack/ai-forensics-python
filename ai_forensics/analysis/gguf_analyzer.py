@@ -85,6 +85,7 @@ class GGUFAnalyzer(Analyzer):
         if len(value_str) > 70:
             value_str = value_str[:67] + "..."
 
+        # Add rich context to the finding
         report.add(
             f"kv_store:{k}",
             ok,
@@ -93,6 +94,9 @@ class GGUFAnalyzer(Analyzer):
                 "key": k,
                 "type": v.type if isinstance(v.type, str) else v.type.__class__.__name__,
                 "value": value_str,
+                "start": v.offset_start,
+                "end": v.offset_end,
+                "size": v.offset_end - v.offset_start,
             },
         )
 
@@ -113,17 +117,6 @@ class GGUFAnalyzer(Analyzer):
             return
 
         model = parsed.model
-        # Update the report metadata
-        report.metadata.update(
-            {k: v for k, v in model.kv.items() if "profile" not in k}
-        )  # Keep profile for later
-
-        # Create dedicated findings for Model Metadata ---
-        report.add("model_metadata:Version", True, f"v{model.version} ({model.endian})")
-        report.add("model_metadata:Alignment", True, str(model.alignment))
-        report.add("model_metadata:KV_Count", True, str(model.n_kv))
-        report.add("model_metadata:Tensor_Count", True, str(model.n_tensors))
-        report.add("model_metadata:Data_Offset", True, str(model.data_offset))
 
         # Create findings for each KV Store entry
         for key, value in sorted(model.kv.items()):

@@ -17,6 +17,8 @@ class GGUFKV:
     type: int
     is_array: bool
     value: Any
+    offset_start: int
+    offset_end: int
 
 
 @dataclass
