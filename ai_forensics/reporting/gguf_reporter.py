@@ -68,7 +68,7 @@ def _render_deep_kv_analysis_table(findings: List[Finding]) -> None:
     table = Table(
         title="Deep Analysis: Key-Value Store Content",
         box=box.ROUNDED,
-        show_lines=True,
+        show_lines=False,
         title_style="bold yellow",
     )
     table.add_column("Status", justify="center", width=8)
