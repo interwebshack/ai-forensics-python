@@ -186,7 +186,7 @@ def render_findings(rep: AnalysisReport) -> None:
                 )
 
 
-def render_reason_matrix(rep: AnalysisReport) -> None:
+def _render_reason_matrix(rep: AnalysisReport) -> None:
     """Render the reason matrix table."""
     if not rep.reason_matrix:
         return
