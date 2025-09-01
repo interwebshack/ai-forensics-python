@@ -61,6 +61,9 @@ def _render_kv_store_table(findings: List[Finding]) -> None:
     table.add_column("Declared Type", style="yellow")
     table.add_column("Value (Formatted)", style="white")
 
+    # Explicitly sort by start address to guarantee correct physical layout view
+    findings.sort(key=lambda f: f.context.get("start", 0))
+
     for index, f in enumerate(findings, start=1):
         status = "[green]PASS[/green]" if f.ok else "[bold red]FAIL[/bold red]"
         ctx = f.context

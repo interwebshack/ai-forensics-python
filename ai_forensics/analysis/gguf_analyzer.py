@@ -119,7 +119,7 @@ class GGUFAnalyzer(Analyzer):
         model = parsed.model
 
         # Create findings for each KV Store entry
-        for key, value in sorted(model.kv.items()):
+        for key, value in model.kv.items():
             self._validate_and_format_kv(key, value, report)
 
         # CONSOLIDATED STRUCTURAL INTEGRITY CHECKS
