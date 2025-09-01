@@ -38,6 +38,7 @@ class AnalysisReport:
     metadata: Dict[str, Any]
     findings: List[Finding] = field(default_factory=list)
     reason_matrix: List[ReasonEntry] = field(default_factory=list)
+    stages_run: List[str] = field(default_factory=list)
 
     def add(self, name: str, ok: bool, details: str = "", **context: Any) -> None:
         self.findings.append(Finding(name=name, ok=ok, details=details, context=context))

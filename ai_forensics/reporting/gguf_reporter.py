@@ -207,6 +207,28 @@ def _render_reason_matrix(rep: AnalysisReport) -> None:
     console.print(rt)
 
 
+def _render_deep_kv_table(findings: List[Finding]) -> None:
+    """Renders a deep analysis table for the KV store with full values."""
+    table = Table(
+        title="Deep Analysis: Key-Value Store Content",
+        box=box.ROUNDED,
+        show_lines=False,
+        title_style="bold yellow",
+    )
+    table.add_column("Status", justify="center", width=8)
+    table.add_column("Key", style="cyan", no_wrap=True)
+    table.add_column("Full Value / Semantic Meaning", style="white")
+
+    findings.sort(key=lambda f: f.name)
+
+    for f in findings:
+        status = "[green]PASS[/green]" if f.ok else "[bold red]FAIL[/bold red]"
+        key = f.name.split(":", 1)[1]
+        table.add_row(status, key, f.details)
+
+    console.print(table)
+
+
 def render_report(rep: AnalysisReport) -> None:
     """Renders the full, detailed console report specifically for a GGUF file."""
     _render_summary(rep)
@@ -232,7 +254,7 @@ def render_report(rep: AnalysisReport) -> None:
         "quantization_profile",
     ]
 
-    # 1. Structural Integrity
+    # Structural Integrity
     if "structural_integrity" in groups:
         _render_generic_table(
             "Structural Integrity Checks",
@@ -240,14 +262,18 @@ def render_report(rep: AnalysisReport) -> None:
             custom_sort_order=integrity_sort_order,
         )
 
-    # 2. Key-Value Store
+    # Key-Value Store
     if "kv_store" in groups:
         _render_kv_store_table(groups["kv_store"])
 
-    # 3. Tensor Layout
+    # Tensor Layout
     if "tensor_layout" in groups:
         _render_combined_tensor_table(
             "Tensor Layout & Size Integrity Checks", groups["tensor_layout"]
         )
+
+    # Render deep scan tables if they exist
+    if "deep_kv_store" in groups:
+        _render_deep_kv_table(groups["deep_kv_store"])
 
     _render_reason_matrix(rep)

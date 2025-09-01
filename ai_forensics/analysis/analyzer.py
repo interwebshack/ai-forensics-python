@@ -41,6 +41,7 @@ class Analyzer(ABC):
                 sha256_hex="not_run",
                 format=self.get_format_name(),
                 metadata={},
+                stages_run=stages,
             )
 
             # --- Conditionally execute SHA256 Stage ---
@@ -58,7 +59,8 @@ class Analyzer(ABC):
                 logger.debug("SHA256 computed in {ms:.2f}ms", ms=t_hash.duration_ms)
 
             # --- Conditionally execute Structure Stage ---
-            if "structure" in stages:
+            if "structure" in stages or "deep_scan" in stages:
+                # We need to run the core analysis for both structure and deep scan
                 with Timer("parse_and_analyze") as t_core:
                     # Delegate to the concrete implementation for the core analysis
                     self._perform_analysis(mv, report)
