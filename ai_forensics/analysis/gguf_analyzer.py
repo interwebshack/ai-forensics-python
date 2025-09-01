@@ -30,51 +30,43 @@ class GGUFAnalyzer(Analyzer):
             parsed = parse_gguf_versioned(mv, file_size=file_size)
         except GGUFParseError as e:
             report.add("parse", False, f"GGUF parse error: {e}")
-            report.add_reason("gguf v1/v2/v3", str(e))
             return
 
         if parsed.model is None:
+            report.add("parse", False, "No GGUF version parser accepted this file")
             for mm in parsed.mismatches:
                 report.add_reason(f"gguf {mm.version}", mm.reason)
-            report.add("parse", False, "No version parser accepted this file")
             return
 
         model = parsed.model
         # Update the report metadata
         report.metadata.update(
-            {
-                "version": model.version,
-                "endian": model.endian,
-                "alignment": model.alignment,
-                "n_kv": model.n_kv,
-                "n_tensors": model.n_tensors,
-                "data_offset": model.data_offset,
-            }
-        )
+            {k: v for k, v in model.kv.items() if "profile" not in k}
+        )  # Keep profile for later
 
-        # Metadata Layout Checks
+        # --- CONSOLIDATED STRUCTURAL INTEGRITY CHECKS ---
         report.add(
             "structural_integrity:magic_version", True, f"GGUF v{model.version} ({model.endian})"
         )
+        report.add("structural_integrity:Magic_Bytes", True, "Region: [0, 8)")
         report.add(
             "structural_integrity:GGUF_Header", True, f"Region: [8, {model.header_end_offset})"
         )
         report.add(
             "structural_integrity:KV_Store",
             True,
-            f"Region: [{model.header_end_offset}, {model.kv_end_offset})",
+            f"Region: [{model.header_end_offset}, {model.kv_end_offset}) (Count: {model.n_kv})",
         )
         report.add(
             "structural_integrity:Tensor_Info",
             True,
-            f"Region: [{model.kv_end_offset}, {model.tensor_info_end_offset})",
+            f"Region: [{model.kv_end_offset}, {model.tensor_info_end_offset}) (Count: {model.n_tensors})",
         )
 
-        # Offset and Alignment Checks
         report.add(
             "structural_integrity:metadata_offset_bounds",
             model.tensor_info_end_offset <= file_size,
-            f"End of metadata: {model.tensor_info_end_offset}",
+            f"Region: [0, {model.tensor_info_end_offset})",
         )
         ok_align = model.alignment != 0 and (model.alignment & (model.alignment - 1)) == 0
         report.add(
@@ -83,10 +75,9 @@ class GGUFAnalyzer(Analyzer):
         report.add(
             "structural_integrity:data_offset_bounds",
             model.data_offset <= file_size,
-            f"Start of data: {model.data_offset}",
+            f"Region: [{model.data_offset}, {file_size})",
         )
 
-        # Tensor Structure Checks
         order = sorted(model.tensors, key=lambda t: t.offset)
         report.add(
             "structural_integrity:tensor_offsets_sorted",
@@ -95,53 +86,68 @@ class GGUFAnalyzer(Analyzer):
         )
 
         bounds: List[Tuple[str, int, int]] = []
+        non_overlap = True
+
+        # --- CONSOLIDATED TENSOR LAYOUT & SIZE ANALYSIS ---
         for i, ti in enumerate(order):
             start = model.data_offset + ti.offset
             next_start_abs = (
                 (model.data_offset + order[i + 1].offset) if i + 1 < len(order) else file_size
             )
-            # The on-disk size of the tensor data is the space between its start and
-            # the next tensor's start
             end = next_start_abs
+            bounds.append((ti.name, start, end))
+
+            # Bounds Check
             in_file = 0 <= start <= end <= file_size
 
-            # We now pass the details as structured context for better reporting.
+            # Size Consistency Check
+            info = QUANTIZATION_MAP.get(ti.ggml_type)
+            on_disk_size = end - start
+            expected_size = info.get_expected_size(ti.n_elements) if info else -1
+            size_ok = (expected_size == on_disk_size) if expected_size != -1 else False
+
+            # Add a single, comprehensive finding for this tensor
             report.add(
-                f"tensor_bounds:{ti.name}",
-                in_file,
-                f"[{start},{end})",  # The detail string is now simpler
+                f"tensor_layout:{ti.name}",
+                ok=(in_file and size_ok),
+                details="",  # Details are now in columns
                 **{
                     "start": start,
                     "end": end,
+                    "on_disk": on_disk_size,
+                    "expected": expected_size if expected_size != -1 else "N/A",
                     "type": ti.ggml_type.name,
                     "dims": str(ti.dims),
                 },
             )
-            bounds.append((ti.name, start, end))
 
-        non_overlap = True
         for i in range(len(bounds) - 1):
-            _, s0, e0 = bounds[i]
-            _, s1, _ = bounds[i + 1]
-            if e0 > s1:
+            if bounds[i][2] > bounds[i + 1][1]:
                 non_overlap = False
                 break
         report.add(
-            "structural_integrity:tensor_non_overlap", non_overlap, "no overlapping tensor regions"
+            "structural_integrity:tensor_non_overlap",
+            non_overlap,
+            "no overlapping tensor data regions",
         )
 
-        # Quantization Profile (Informational)
-        quantization_mix = {k: v for k, v in report.metadata.get("profile", {}).items()}
-        profile_str = ", ".join([f"{qt}: {count}" for qt, count in quantization_mix.items()])
-        if profile_str:
-            report.add("structural_integrity:quantization_profile", True, profile_str)
-
-        # Final File Boundary Check
+        # Final Boundary and Profile Checks
         last_tensor_end = bounds[-1][2] if bounds else model.data_offset
         coverage_ok = last_tensor_end == file_size
-        details = (
-            f"Last data address {last_tensor_end} matches file size {file_size}."
-            if coverage_ok
-            else f"Last data address {last_tensor_end} does not match file size {file_size}."
+        report.add(
+            "structural_integrity:file_address_space_boundary",
+            coverage_ok,
+            f"Last data address {last_tensor_end} vs file size {file_size}",
         )
-        report.add("structural_integrity:file_address_space_boundary", coverage_ok, details)
+
+        quantization_mix = {
+            f.context.get("type"): 0 for f in report.findings if f.name.startswith("tensor_layout:")
+        }
+        for f in report.findings:
+            if f.name.startswith("tensor_layout:"):
+                quantization_mix[f.context.get("type")] += 1
+        profile_str = ", ".join(
+            [f"{qt}: {count}" for qt, count in sorted(quantization_mix.items())]
+        )
+        if profile_str:
+            report.add("structural_integrity:quantization_profile", True, profile_str)
