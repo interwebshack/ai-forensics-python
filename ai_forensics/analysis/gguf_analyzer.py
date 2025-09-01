@@ -14,12 +14,14 @@ from ai_forensics.analysis.base import AnalysisReport
 from ai_forensics.model_formats.gguf.gguf import GGUFKV, GGUFParseError
 from ai_forensics.model_formats.gguf.gguf_quantization import QUANTIZATION_MAP
 from ai_forensics.model_formats.gguf.gguf_versions import (
+    T_BOOL,
     T_FLOAT32,
     T_FLOAT64,
     T_INT8,
     T_INT16,
     T_INT32,
     T_INT64,
+    T_STRING,
     T_UINT8,
     T_UINT16,
     T_UINT32,
@@ -34,8 +36,8 @@ class GGUFAnalyzer(Analyzer):
     def get_format_name(self) -> str:
         return "gguf"
 
-    def _validate_and_format_kv(self, k: str, v: GGUFKV, report: AnalysisReport):
-        """Validates KV entries, formats their values, and creates findings for the standard report."""
+    def _create_kv_layout_finding(self, k: str, v: GGUFKV, report: AnalysisReport):
+        """Creates a finding for the standard KV layout and integrity report."""
         ok = True
         value_str = ""
         is_numeric_bytes = isinstance(v.value, bytes) and not v.is_array
@@ -69,8 +71,10 @@ class GGUFAnalyzer(Analyzer):
                 preview = f"[{', '.join(preview_items)}{', ...' if count > 3 else ''}]"
                 value_str = f"Array, Count={count}, Preview={preview}"
             else:
-                str_value = v.value.decode("utf-8") if isinstance(v.value, bytes) else str(v.value)
-                value_str = str_value.replace("Ġ", " ")
+                str_value = (
+                    v.value.decode("utf-8") if isinstance(v.value, bytes) else str(v.value)
+                ).replace("Ġ", " ")
+                value_str = str_value
 
         except (struct.error, UnicodeDecodeError, TypeError) as e:
             ok = False
@@ -80,12 +84,12 @@ class GGUFAnalyzer(Analyzer):
             value_str = value_str[:67] + "..."
 
         report.add(
-            f"kv_store:{k}",
+            f"kv_layout:{k}",
             ok,
             details="",
             **{
                 "key": k,
-                "type": v.type if isinstance(v.type, str) else v.type.__class__.__name__,
+                "type": v.type.name if hasattr(v.type, "name") else str(v.type),
                 "value": value_str,
                 "start": v.offset_start,
                 "end": v.offset_end,
@@ -94,7 +98,7 @@ class GGUFAnalyzer(Analyzer):
         )
 
     def _perform_deep_kv_analysis(self, model, report: AnalysisReport):
-        """Performs semantic validation and full value extraction for the KV store."""
+        """Performs deep content, semantic, and security analysis of the KV store."""
         known_file_types = {
             0: "All F32",
             1: "Mostly F16",
@@ -109,6 +113,15 @@ class GGUFAnalyzer(Analyzer):
             13: "Mostly Q5_K",
             14: "Mostly Q6_K",
         }
+        prompt_injection_keywords = [
+            "ignore all previous",
+            "disregard the above",
+            "override instructions",
+            "secret instruction",
+            "true master",
+            "confidential",
+        ]
+        template_exploit_payloads = ["__globals__", "__init__", "os.system", "subprocess.run"]
 
         for key, v in model.kv.items():
             ok = True
@@ -137,10 +150,7 @@ class GGUFAnalyzer(Analyzer):
                         full_value_str = str(val)
                 elif v.is_array:
                     count = len(v.value)
-                    if count > 50:
-                        items = v.value[:25] + ["..."] + v.value[-25:]
-                    else:
-                        items = v.value
+                    items = v.value[:25] + ["..."] + v.value[-25:] if count > 50 else v.value
                     readable_items = [
                         (item.decode("utf-8") if isinstance(item, bytes) else str(item)).replace(
                             "Ġ", " "
@@ -148,28 +158,46 @@ class GGUFAnalyzer(Analyzer):
                         for item in items
                     ]
                     full_value_str = f"Array (Count={count})\n" + "\n".join(readable_items)
-                else:  # Simple types (string, bool)
+                else:
                     full_value_str = (
                         v.value.decode("utf-8") if isinstance(v.value, bytes) else str(v.value)
                     ).replace("Ġ", " ")
-                    if full_value_str.strip().startswith("{"):
-                        try:
-                            parsed_json = json.loads(full_value_str)
-                            full_value_str = json.dumps(parsed_json, indent=2)
-                        except json.JSONDecodeError:
-                            pass
             except Exception as e:
                 ok = False
                 full_value_str = f"[Extraction Error: {e}]"
 
-            # 2. Semantic Validation
+            # 2. Semantic and Cybersecurity Validation
             if key == "general.file_type" and is_numeric_bytes:
                 val = int(full_value_str)
                 if val not in known_file_types:
                     ok = False
                 full_value_str = f"{val} ({known_file_types.get(val, 'Unknown Type!')})"
 
-            report.add(f"deep_kv_store:{key}", ok, details=full_value_str)
+            if key == "tokenizer.chat_template":
+                if full_value_str.strip().startswith("{"):
+                    try:
+                        full_value_str = json.dumps(json.loads(full_value_str), indent=2)
+                    except json.JSONDecodeError:
+                        pass
+                for keyword in prompt_injection_keywords + template_exploit_payloads:
+                    if keyword in full_value_str.lower():
+                        ok = False
+                        full_value_str += (
+                            f"\n\n[CYBERSECURITY ALERT: Suspicious keyword '{keyword}' found!]"
+                        )
+
+            report.add(
+                f"deep_kv_store:{key}",
+                ok,
+                details=full_value_str,
+                **{
+                    "key": key,
+                    "start": v.offset_start,
+                    "end": v.offset_end,
+                    "size": v.offset_end - v.offset_start,
+                    "type": v.type.name if hasattr(v.type, "name") else str(v.type),
+                },
+            )
 
     def _perform_analysis(self, mv: memoryview, report: AnalysisReport) -> None:
         """Runs structural and (optionally) deep analysis."""
@@ -185,7 +213,6 @@ class GGUFAnalyzer(Analyzer):
             report.add("parse", False, f"GGUF parse error: {e}")
             return
 
-        # Always run structural checks if the stage is present
         if "structure" in report.stages_run:
             # --- CONSOLIDATED STRUCTURAL INTEGRITY CHECKS ---
             report.add(
@@ -285,7 +312,7 @@ class GGUFAnalyzer(Analyzer):
 
             # Standard KV Scan (for the layout table)
             for key, value in model.kv.items():
-                self._validate_and_format_kv(key, value, report)
+                self._create_kv_layout_finding(key, value, report)
 
             quantization_mix = {}
             for f in report.findings:
@@ -299,6 +326,5 @@ class GGUFAnalyzer(Analyzer):
             if profile_str:
                 report.add("structural_integrity:quantization_profile", True, profile_str)
 
-        # Conditional Deep Scan Stage
         if "deep_scan" in report.stages_run:
             self._perform_deep_kv_analysis(model, report)

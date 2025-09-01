@@ -25,27 +25,11 @@ def _render_summary(rep: AnalysisReport) -> None:
     t.add_row("Size (bytes)", str(rep.file_size))
     t.add_row("Format", rep.format)
     t.add_row("SHA-256", rep.sha256_hex)
-
-    # All other metadata is now shown in the Structural Integrity table
     console.print(t)
 
 
-def _render_model_metadata_table(findings: List[Finding]) -> None:
-    """Renders a table for high-level model metadata."""
-    table = Table(
-        title="Model Metadata", box=box.ROUNDED, show_lines=False, title_style="bold magenta"
-    )
-    table.add_column("Property", style="cyan")
-    table.add_column("Value", style="white")
-
-    for f in sorted(findings, key=lambda x: x.name):
-        prop_name = f.name.split(":", 1)[1].replace("_", " ")
-        table.add_row(prop_name, f.details)
-    console.print(table)
-
-
-def _render_kv_store_table(findings: List[Finding]) -> None:
-    """Renders a detailed table for the Key-Value store with address and size info."""
+def _render_kv_layout_table(findings: List[Finding]) -> None:
+    """Renders the standard KV store table showing layout, integrity, and a preview."""
     table = Table(
         title="Key-Value Store Integrity & Layout",
         box=box.ROUNDED,
@@ -55,13 +39,12 @@ def _render_kv_store_table(findings: List[Finding]) -> None:
     table.add_column("Status", justify="center", width=8)
     table.add_column("Index", justify="right", style="dim")
     table.add_column("Key", style="cyan", no_wrap=True)
-    table.add_column("Start Addr", justify="right", style="white")
-    table.add_column("End Addr", justify="right", style="white")
+    table.add_column("Start Addr", justify="right")
+    table.add_column("End Addr", justify="right")
     table.add_column("Size (B)", justify="right", style="green")
     table.add_column("Declared Type", style="yellow")
-    table.add_column("Value (Formatted)", style="white")
+    table.add_column("Value (Preview)", style="white")
 
-    # Explicitly sort by start address to guarantee correct physical layout view
     findings.sort(key=lambda f: f.context.get("start", 0))
 
     for index, f in enumerate(findings, start=1):
@@ -77,6 +60,28 @@ def _render_kv_store_table(findings: List[Finding]) -> None:
             ctx.get("type", "N/A"),
             ctx.get("value", "N/A"),
         )
+    console.print(table)
+
+
+def _render_deep_kv_analysis_table(findings: List[Finding]) -> None:
+    """Renders the deep analysis table for the KV store with full content."""
+    table = Table(
+        title="Deep Analysis: Key-Value Store Content",
+        box=box.ROUNDED,
+        show_lines=True,
+        title_style="bold yellow",
+    )
+    table.add_column("Status", justify="center", width=8)
+    table.add_column("Key", style="cyan", no_wrap=True)
+    table.add_column("Full Value / Semantic Meaning", style="white")
+
+    findings.sort(key=lambda f: f.name)
+
+    for f in findings:
+        status = "[green]PASS[/green]" if f.ok else "[bold red]FAIL[/bold red]"
+        key = f.name.split(":", 1)[1]
+        table.add_row(status, key, f.details)
+
     console.print(table)
 
 
@@ -147,59 +152,15 @@ def _render_generic_table(
     console.print(table)
 
 
-def render_findings(rep: AnalysisReport) -> None:
-    """Render findings grouped into dynamically created tables for each check type."""
-    if not rep.findings:
-        return
-
-    groups = defaultdict(list)
-    for f in rep.findings:
-        if ":" in f.name:
-            groups[f.name.split(":", 1)[0]].append(f)
-
-    group_order = ["structural_integrity", "tensor_layout"]
-
-    integrity_sort_order = [
-        "alignment_power_of_two",
-        "magic_version",
-        "metadata_offset_bounds",
-        "Magic_Bytes",
-        "GGUF_Header",
-        "KV_Store",
-        "Tensor_Info",
-        "data_offset_bounds",
-        "tensor_offsets_sorted",
-        "tensor_non_overlap",
-        "file_address_space_boundary",
-        "quantization_profile",
-    ]
-
-    for group_name in group_order:
-        if group_name in groups:
-            findings_in_group = groups[group_name]
-            title = (
-                "Tensor Layout & Size Integrity Checks"
-                if group_name == "tensor_layout"
-                else "Structural Integrity Checks"
-            )
-
-            if group_name == "structural_integrity":
-                _render_generic_table(
-                    title, findings_in_group, custom_sort_order=integrity_sort_order
-                )
-            elif group_name == "tensor_layout":
-                _render_combined_tensor_table(title, findings_in_group)
-            else:  # Fallback for any other future groups
-                _render_generic_table(
-                    title.replace("_", " ").title() + " Checks", findings_in_group
-                )
-
-
 def _render_reason_matrix(rep: AnalysisReport) -> None:
     """Render the reason matrix table."""
     if not rep.reason_matrix:
         return
-    rt = Table(title="Reason Matrix (Version/Spec Mismatch Explanations)", box=box.SIMPLE_HEAVY)
+    rt = Table(
+        title="Reason Matrix (Version/Spec Mismatch Explanations)",
+        box=box.SIMPLE_HEAVY,
+        show_lines=False,
+    )
     rt.add_column("Target Version/Spec", style="bold")
     rt.add_column("Reason")
     for entry in rep.reason_matrix:
@@ -207,38 +168,16 @@ def _render_reason_matrix(rep: AnalysisReport) -> None:
     console.print(rt)
 
 
-def _render_deep_kv_table(findings: List[Finding]) -> None:
-    """Renders a deep analysis table for the KV store with full values."""
-    table = Table(
-        title="Deep Analysis: Key-Value Store Content",
-        box=box.ROUNDED,
-        show_lines=False,
-        title_style="bold yellow",
-    )
-    table.add_column("Status", justify="center", width=8)
-    table.add_column("Key", style="cyan", no_wrap=True)
-    table.add_column("Full Value / Semantic Meaning", style="white")
-
-    findings.sort(key=lambda f: f.name)
-
-    for f in findings:
-        status = "[green]PASS[/green]" if f.ok else "[bold red]FAIL[/bold red]"
-        key = f.name.split(":", 1)[1]
-        table.add_row(status, key, f.details)
-
-    console.print(table)
-
-
 def render_report(rep: AnalysisReport) -> None:
     """Renders the full, detailed console report specifically for a GGUF file."""
     _render_summary(rep)
 
-    # Group all findings from the report
     groups = defaultdict(list)
     for f in rep.findings:
         if ":" in f.name:
             groups[f.name.split(":", 1)[0]].append(f)
 
+    # Define the order for the main structural integrity table
     integrity_sort_order = [
         "alignment_power_of_two",
         "magic_version",
@@ -254,7 +193,7 @@ def render_report(rep: AnalysisReport) -> None:
         "quantization_profile",
     ]
 
-    # Structural Integrity
+    # 1. Structural Integrity
     if "structural_integrity" in groups:
         _render_generic_table(
             "Structural Integrity Checks",
@@ -262,18 +201,18 @@ def render_report(rep: AnalysisReport) -> None:
             custom_sort_order=integrity_sort_order,
         )
 
-    # Key-Value Store
-    if "kv_store" in groups:
-        _render_kv_store_table(groups["kv_store"])
+    # 2. Standard KV Layout (if present)
+    if "kv_layout" in groups:
+        _render_kv_layout_table(groups["kv_layout"])
 
-    # Tensor Layout
+    # 3. Deep KV Content (if a deep scan was run)
+    if "deep_kv_store" in groups:
+        _render_deep_kv_analysis_table(groups["deep_kv_store"])
+
+    # 4. Tensor Layout
     if "tensor_layout" in groups:
         _render_combined_tensor_table(
             "Tensor Layout & Size Integrity Checks", groups["tensor_layout"]
         )
-
-    # Render deep scan tables if they exist
-    if "deep_kv_store" in groups:
-        _render_deep_kv_table(groups["deep_kv_store"])
 
     _render_reason_matrix(rep)
