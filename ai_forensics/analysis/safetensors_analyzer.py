@@ -39,9 +39,27 @@ class SafeTensorsAnalyzer(Analyzer):
                 "data_start": model.data_start,
             }
         )
+
+        # File Layout and Coverage Analysis
         report.add(
-            "header_basic", True, f"header_size={model.header_size} data_start={model.data_start}"
+            "file_layout:header_and_metadata",
+            True,
+            "SafeTensors Header (JSON)",
+            **{"start": 0, "end": model.data_start},
         )
+        report.add(
+            "structural_integrity:metadata_offset_bounds",
+            model.data_start <= file_size,
+            f"Metadata region: [0, {model.data_start})",
+        )
+        report.add(
+            "structural_integrity:data_offset_bounds",
+            model.data_start <= file_size,
+            f"Tensor data region: [{model.data_start}, {file_size})",
+        )
+
+        # Existing checks moved to the 'structural_integrity' group for consistency
+        report.add("structural_integrity:header_basic", True, f"header_size={model.header_size}")
 
         prev_end = model.data_start
         ok_order = True
@@ -72,3 +90,13 @@ class SafeTensorsAnalyzer(Analyzer):
 
         report.add("tensor_order_non_overlapping", ok_order, "Non-overlapping, increasing offsets")
         report.add("tensor_bounds_all_valid", ok_bounds, "All tensor extents lie within file")
+
+        # Overall file coverage check
+        last_tensor_end = prev_end  # The loop already calculates this
+        coverage_ok = last_tensor_end == file_size
+        details = (
+            "The end of the last tensor aligns perfectly with the end of the file."
+            if coverage_ok
+            else f"There are {file_size - last_tensor_end} bytes of unaccounted-for data at the end of the file."
+        )
+        report.add("overall_result:file_coverage", coverage_ok, details)

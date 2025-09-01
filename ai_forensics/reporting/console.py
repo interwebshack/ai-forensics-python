@@ -35,6 +35,40 @@ def render_summary(rep: AnalysisReport) -> None:
     console.print(t)
 
 
+def _render_file_layout_table(title: str, findings: List[Finding]) -> None:
+    """Specialized renderer for the File Layout table."""
+    table = Table(title=title, box=box.ROUNDED, show_lines=False, title_style="bold magenta")
+    table.add_column("Section", style="cyan")
+    table.add_column("Start Address", justify="right", style="white")
+    table.add_column("End Address", justify="right", style="white")
+    table.add_column("Description", style="white")
+
+    # This table is informational, so we sort by start address
+    findings.sort(key=lambda f: f.context.get("start", 0))
+
+    for f in findings:
+        section_name = f.name.split(":", 1)[1].replace("_", " ").title()
+        ctx = f.context
+        start = str(ctx.get("start", "N/A"))
+        end = str(ctx.get("end", "N/A"))
+        table.add_row(section_name, start, end, f.details)
+
+    console.print(table)
+
+
+def _render_overall_result_table(title: str, findings: List[Finding]) -> None:
+    """Specialized renderer for the Overall Result table."""
+    table = Table(title=title, box=box.HEAVY_HEAD, show_header=False, title_style="bold green")
+    table.add_column("Status", justify="center", width=8)
+    table.add_column("Details")
+
+    for f in findings:
+        status = "[green]PASS[/green]" if f.ok else "[bold red]FAIL[/bold red]"
+        table.add_row(status, f.details)
+
+    console.print(table)
+
+
 def _render_tensor_bounds_table(title: str, findings: List[Finding]) -> None:
     """Specialized renderer for the 'Tensor Bounds' table with custom columns and sorting."""
     table = Table(title=title, box=box.ROUNDED, show_lines=False, title_style="bold magenta")
@@ -124,38 +158,50 @@ def render_findings(rep: AnalysisReport) -> None:
         return
 
     groups = defaultdict(list)
-    general_check_names = {
-        "parse",
-        "magic_version",
-        "alignment_power_of_two",
-        "data_offset_bounds",
-        "tensor_offsets_sorted",
-        "tensor_non_overlap",
-        "header_basic",
-        "tensor_order_non_overlapping",
-        "tensor_bounds_all_valid",
-    }
-    findings_to_render = [f for f in rep.findings if f.name != "quantization_profile"]
-
-    for f in findings_to_render:
+    for f in rep.findings:
+        # Group findings by the prefix before the first colon
         if ":" in f.name:
             group_name = f.name.split(":", 1)[0]
             groups[group_name].append(f)
-        elif f.name in general_check_names:
-            groups["structural_integrity"].append(f)
         else:
             groups["miscellaneous"].append(f)
 
-    # Render a table for each group, using the specialized renderer where appropriate
+    # Define the explicit order in which tables should be rendered
+    group_order = [
+        "file_layout",
+        "structural_integrity",
+        "tensor_bounds",
+        "tensor_size_consistency",
+        "quantization_known",
+        "quantization_alignment",
+        "overall_result",
+    ]
+
+    # Render tables in the predefined order
+    for group_name in group_order:
+        if group_name in groups:
+            findings_in_group = groups[group_name]
+            title = group_name.replace("_", " ").title()
+
+            # Use the correct specialized renderer for each group
+            if group_name == "file_layout":
+                _render_file_layout_table(title, findings_in_group)
+            elif group_name == "overall_result":
+                _render_overall_result_table(title, findings_in_group)
+            elif group_name == "tensor_bounds":
+                _render_tensor_bounds_table(f"{title} Checks", findings_in_group)
+            elif group_name == "tensor_size_consistency":
+                _render_size_consistency_table(f"{title} Checks", findings_in_group)
+            else:
+                _render_generic_table(f"{title} Checks", findings_in_group)
+
+            # Remove the group after rendering to handle any remaining groups later
+            del groups[group_name]
+
+    # Render any remaining groups that were not in the explicit order
     for group_name, findings_in_group in sorted(groups.items()):
         title = group_name.replace("_", " ").title() + " Checks"
-
-        if group_name == "tensor_bounds":
-            _render_tensor_bounds_table(title, findings_in_group)
-        elif group_name == "tensor_size_consistency":
-            _render_size_consistency_table(title, findings_in_group)
-        else:
-            _render_generic_table(title, findings_in_group)
+        _render_generic_table(title, findings_in_group)
 
 
 def render_reason_matrix(rep: AnalysisReport) -> None:

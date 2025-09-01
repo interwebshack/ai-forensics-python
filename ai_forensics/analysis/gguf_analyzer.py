@@ -52,20 +52,44 @@ class GGUFAnalyzer(Analyzer):
             }
         )
 
-        # Basic checks
-        report.add("magic_version", True, f"GGUF v{model.version} ({model.endian})")
-        ok_align = model.alignment != 0 and (model.alignment & (model.alignment - 1)) == 0
-        report.add("alignment_power_of_two", ok_align, f"alignment={model.alignment}")
+        # File Layout and Coverage Analysis
         report.add(
-            "data_offset_bounds",
+            "file_layout:header_and_metadata",
+            True,  # This is informational
+            "GGUF Header, KV Store, and Tensor Info",
+            **{"start": 0, "end": model.data_offset},
+        )
+
+        # Check that the metadata section is valid
+        report.add(
+            "structural_integrity:metadata_offset_bounds",
             model.data_offset <= file_size,
-            f"data_start={model.data_offset}, file_size={file_size}",
+            f"Metadata region: [0, {model.data_offset})",
+        )
+
+        # Check that the tensor data section start is valid
+        report.add(
+            "structural_integrity:data_offset_bounds",
+            model.data_offset <= file_size,
+            f"Tensor data region: [{model.data_offset}, {file_size})",
+        )
+
+        # Basic structural checks
+        report.add(
+            "structural_integrity:magic_version", True, f"GGUF v{model.version} ({model.endian})"
+        )
+        ok_align = model.alignment != 0 and (model.alignment & (model.alignment - 1)) == 0
+        report.add(
+            "structural_integrity:alignment_power_of_two", ok_align, f"alignment={model.alignment}"
         )
 
         # Tensor region checks (bounds & non-overlap via next-start rule)
         order = sorted(model.tensors, key=lambda t: t.offset)
-        ok_sorted = all(order[i].offset <= order[i + 1].offset for i in range(len(order) - 1))
-        report.add("tensor_offsets_sorted", ok_sorted, "non-decreasing offsets")
+        report.add(
+            "structural_integrity:tensor_offsets_sorted",
+            all(order[i].offset <= order[i + 1].offset for i in range(len(order) - 1)),
+            "non-decreasing offsets",
+        )
 
         bounds: List[Tuple[str, int, int]] = []
         for i, ti in enumerate(order):
@@ -162,3 +186,13 @@ class GGUFAnalyzer(Analyzer):
                 "Distribution of tensor quantization formats found in model",
                 profile=quantization_mix,
             )
+
+        # Overall file coverage check
+        last_tensor_end = bounds[-1][2] if bounds else model.data_offset
+        coverage_ok = last_tensor_end == file_size
+        details = (
+            "The end of the last tensor aligns perfectly with the end of the file."
+            if coverage_ok
+            else f"There are {file_size - last_tensor_end} bytes of unaccounted-for data at the end of the file."
+        )
+        report.add("overall_result:file_coverage", coverage_ok, details)
